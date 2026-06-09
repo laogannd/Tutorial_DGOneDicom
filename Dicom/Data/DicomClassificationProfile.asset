@@ -1,0 +1,47 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: db60122e159acb54aafb5d4d8d27dae2, type: 3}
+  m_Name: DicomClassificationProfile
+  m_EditorClassIdentifier: 
+  _categories:
+  - Name: "\u533A\u95F41 [-704,-696]"
+    HuMin: -704
+    HuMax: -696
+    Color: {r: 0.95, g: 0.285, b: 0.285, a: 1}
+  - Name: "\u533A\u95F42 [-504,-496]"
+    HuMin: -504
+    HuMax: -496
+    Color: {r: 0.95, g: 0.78375, b: 0.285, a: 1}
+  - Name: "\u533A\u95F43 [-304,-296]"
+    HuMin: -304
+    HuMax: -296
+    Color: {r: 0.6175, g: 0.95, b: 0.285, a: 1}
+  - Name: "\u533A\u95F44 [-104,-96]"
+    HuMin: -104
+    HuMax: -96
+    Color: {r: 0.285, g: 0.95, b: 0.45125002, a: 1}
+  - Name: "\u533A\u95F45 [0,8]"
+    HuMin: 0
+    HuMax: 8
+    Color: {r: 0.285, g: 0.95, b: 0.95, a: 1}
+  - Name: "\u533A\u95F46 [96,104]"
+    HuMin: 96
+    HuMax: 104
+    Color: {r: 0.285, g: 0.45125002, b: 0.95, a: 1}
+  - Name: "\u533A\u95F47 [296,304]"
+    HuMin: 296
+    HuMax: 304
+    Color: {r: 0.6175, g: 0.285, b: 0.95, a: 1}
+  - Name: "\u533A\u95F48 [696,704]"
+    HuMin: 696
+    HuMax: 704
+    Color: {r: 0.95, g: 0.285, b: 0.78375, a: 1}
