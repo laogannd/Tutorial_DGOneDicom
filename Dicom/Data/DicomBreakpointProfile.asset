@@ -1,0 +1,31 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f57e5d58ea7f0784c82efbca0eb6931b, type: 3}
+  m_Name: DicomBreakpointProfile
+  m_EditorClassIdentifier: 
+  _stops:
+  - Value: -700
+    Color: {r: 1, g: 0, b: 0, a: 1}
+  - Value: -500
+    Color: {r: 1, g: 0.62840414, b: 0, a: 1}
+  - Value: -300
+    Color: {r: 0.9384973, g: 1, b: 0, a: 1}
+  - Value: -100
+    Color: {r: 0.66810894, g: 1, b: 0, a: 1}
+  - Value: 100
+    Color: {r: 0, g: 1, b: 0.7203593, a: 1}
+  - Value: 300
+    Color: {r: 0, g: 0.71566486, b: 1, a: 1}
+  - Value: 500
+    Color: {r: 0.58178806, g: 0, b: 1, a: 1}
+  - Value: 700
+    Color: {r: 1, g: 0, b: 0.88915014, a: 1}

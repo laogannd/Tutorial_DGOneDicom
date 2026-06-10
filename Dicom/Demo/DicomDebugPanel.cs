@@ -35,9 +35,9 @@ namespace Dicom.Demo
 
         bool _clipEnabled = true;
 
-        // 显色模式：灰度强度 / 分类调色板 / 离散 LUT 伪彩，三选一
+        // 显色模式：灰度强度 / 分类调色板 / 离散 LUT 伪彩 / 断点插值，四选一
         DicomColorMode _colorMode = DicomColorMode.Classification;
-        static readonly string[] _colorModeNames = { "灰度", "分类", "LUT" };
+        static readonly string[] _colorModeNames = { "灰度", "分类", "LUT", "断点" };
         // LUT 预设名,顺序须与 DicomLutProfile.LutPreset 枚举一致
         static readonly string[] _lutPresetNames = { "Custom", "热铁", "彩虹", "骨窗", "灰反" };
 
@@ -247,6 +247,28 @@ namespace Dicom.Demo
                 {
                     profile.SetPreset((DicomLutProfile.LutPreset)presetIdx);
                     _controller.SetLutProfile(profile);
+                }
+            }
+
+            // 断点模式下列出当前断点配置(只读),供确认值与色;具体编辑在 Inspector
+            if (_colorMode == DicomColorMode.Breakpoint && _controller != null)
+            {
+                var bp = _controller.BreakpointProfile;
+                if (bp == null || bp.Count == 0)
+                {
+                    GUILayout.Label("未绑定断点配置或无断点");
+                }
+                else
+                {
+                    GUILayout.Label($"断点 ({bp.Count}) 值域 [{bp.DomainMin:F0}, {bp.DomainMax:F0}]");
+                    for (int i = 0; i < bp.Count; i++)
+                    {
+                        var s = bp.Stops[i];
+                        var prev = GUI.color;
+                        GUI.color = s.Color;
+                        GUILayout.Label($"  ■ {s.Value:F0}");
+                        GUI.color = prev;
+                    }
                 }
             }
 

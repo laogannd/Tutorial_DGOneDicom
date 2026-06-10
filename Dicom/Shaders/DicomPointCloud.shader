@@ -42,13 +42,20 @@ Shader "Dicom/PointCloud"
             float4 _DicomWindow;
             // 外观：rgb 色调，a 强度增益
             float4 _DicomTint;
-            // 显色模式：0=强度灰度，1=按类别调色板着色，2=离散 LUT 伪彩
+            // 显色模式：0=强度灰度，1=按类别调色板着色，2=离散 LUT 伪彩，3=断点插值显色
             float _DicomColorMode;
             // 分类调色板，索引与 DicomClassificationProfile 类别顺序一致
             float4 _DicomClassColors[16];
             // 离散查找表纹理(宽=色阶数，Point 过滤)，按归一化强度采样取伪彩色
             TEXTURE2D(_DicomLut);
             SAMPLER(sampler_DicomLut);
+            // 断点插值查找表(Bilinear 过滤)，按真实值映射到断点值域采样
+            TEXTURE2D(_DicomBreakpointLut);
+            SAMPLER(sampler_DicomBreakpointLut);
+            // 归一化范围：x=NormalizeMin, y=NormalizeMax，用于把 intensity 反推为真实值
+            float4 _DicomNormalize;
+            // 断点值域：x=DomainMin, y=DomainMax(首尾断点真实值)
+            float4 _DicomBreakpointDomain;
 
             struct Varyings
             {
@@ -97,6 +104,16 @@ Shader "Dicom/PointCloud"
                 float c = _DicomWindow.x;
                 float w = max(_DicomWindow.y, 1e-4);
                 float g = saturate((i.intensity - (c - w * 0.5)) / w);
+
+                // 断点插值模式：反推真实值 -> 映射到断点值域 -> 采样平滑色带(不受窗宽窗位影响,所配即所见)
+                if (_DicomColorMode > 2.5)
+                {
+                    float real = i.intensity * (_DicomNormalize.y - _DicomNormalize.x) + _DicomNormalize.x;
+                    float dom = max(_DicomBreakpointDomain.y - _DicomBreakpointDomain.x, 1e-4);
+                    float u = saturate((real - _DicomBreakpointDomain.x) / dom);
+                    half4 bp = SAMPLE_TEXTURE2D(_DicomBreakpointLut, sampler_DicomBreakpointLut, float2(u, 0.5));
+                    return half4(bp.rgb, 1.0);
+                }
 
                 // 离散 LUT 模式：归一化强度作 u 坐标采样伪彩查找表(Point 过滤出硬色阶)
                 if (_DicomColorMode > 1.5)
@@ -159,6 +176,12 @@ Shader "Dicom/PointCloud"
             float4 _DicomClassColors[16];
             // 离散查找表纹理(宽=色阶数，Point 过滤)，按归一化强度采样取伪彩色
             sampler2D _DicomLut;
+            // 断点插值查找表(Bilinear 过滤)，按真实值映射到断点值域采样
+            sampler2D _DicomBreakpointLut;
+            // 归一化范围：x=NormalizeMin, y=NormalizeMax，用于把 intensity 反推为真实值
+            float4 _DicomNormalize;
+            // 断点值域：x=DomainMin, y=DomainMax(首尾断点真实值)
+            float4 _DicomBreakpointDomain;
 
             struct Varyings
             {
@@ -204,6 +227,16 @@ Shader "Dicom/PointCloud"
                 float c = _DicomWindow.x;
                 float w = max(_DicomWindow.y, 1e-4);
                 float g = saturate((i.intensity - (c - w * 0.5)) / w);
+
+                // 断点插值模式：反推真实值 -> 映射到断点值域 -> 采样平滑色带(不受窗宽窗位影响,所配即所见)
+                if (_DicomColorMode > 2.5)
+                {
+                    float real = i.intensity * (_DicomNormalize.y - _DicomNormalize.x) + _DicomNormalize.x;
+                    float dom = max(_DicomBreakpointDomain.y - _DicomBreakpointDomain.x, 1e-4);
+                    float u = saturate((real - _DicomBreakpointDomain.x) / dom);
+                    fixed4 bp = tex2D(_DicomBreakpointLut, float2(u, 0.5));
+                    return fixed4(bp.rgb, 1.0);
+                }
 
                 // 离散 LUT 模式：归一化强度作 u 坐标采样伪彩查找表(Point 过滤出硬色阶)
                 if (_DicomColorMode > 1.5)

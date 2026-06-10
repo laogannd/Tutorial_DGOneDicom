@@ -18,9 +18,12 @@ namespace Dicom.UI.EditorTools
             public Slider ThresholdMin, ThresholdMax, NormalizeMin, NormalizeMax;
             public TextMeshProUGUI ThresholdMinLabel, ThresholdMaxLabel, NormalizeMinLabel, NormalizeMaxLabel;
             public Button ApplyThreshold, ApplyNormalize;
-            public Toggle ClipToggle, ClassColorToggle, LutColorToggle;
+            public Toggle ClipToggle, ClassColorToggle, LutColorToggle, BreakpointColorToggle;
             public Button LutPresetButton;
             public TextMeshProUGUI LutPresetLabel;
+            public TextMeshProUGUI HuRangeText;
+            public Button ApplyHuRangeButton;
+            public TextMeshProUGUI HuApplyHintLabel;
         }
 
         static PanelRefs BuildSections(RectTransform content)
@@ -67,8 +70,15 @@ namespace Dicom.UI.EditorTools
             r.ClipToggle = CreateToggle("ClipToggle", content, "启用裁切平面");
             r.ClassColorToggle = CreateToggle("ClassColorToggle", content, "按标签分类着色");
             r.LutColorToggle = CreateToggle("LutColorToggle", content, "离散 LUT 伪彩");
+            r.BreakpointColorToggle = CreateToggle("BreakpointColorToggle", content, "断点插值显色");
             r.LutPresetLabel = CreateLabel("LutPresetLabel", content, "LUT 预设: HotIron", 18f, LabelHeight);
             r.LutPresetButton = CreateButton("LutPresetButton", content, "切换 LUT 预设");
+
+            // HU 区间分析区:加载后自动统计的占用区间列表 + 一键写入分类配置
+            CreateHeader("HuRangeHeader", content, "HU 区间分析");
+            r.HuRangeText = CreateLabel("HuRangeText", content, "加载完成后自动统计", 18f, 160f);
+            r.ApplyHuRangeButton = CreateButton("ApplyHuRangeButton", content, "一键应用到 Profile");
+            r.HuApplyHintLabel = CreateLabel("HuApplyHintLabel", content, "", 16f, LabelHeight);
 
             return r;
         }
@@ -120,8 +130,12 @@ namespace Dicom.UI.EditorTools
             Set(so, "_clipToggle", r.ClipToggle);
             Set(so, "_classColorToggle", r.ClassColorToggle);
             Set(so, "_lutColorToggle", r.LutColorToggle);
+            Set(so, "_breakpointColorToggle", r.BreakpointColorToggle);
             Set(so, "_lutPresetButton", r.LutPresetButton);
             Set(so, "_lutPresetLabel", r.LutPresetLabel);
+            Set(so, "_huRangeText", r.HuRangeText);
+            Set(so, "_applyHuRangeButton", r.ApplyHuRangeButton);
+            Set(so, "_huApplyHintLabel", r.HuApplyHintLabel);
             so.ApplyModifiedPropertiesWithoutUndo();
         }
 

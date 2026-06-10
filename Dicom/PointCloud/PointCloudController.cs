@@ -13,12 +13,13 @@ using Dicom.Analysis;
 
 namespace Dicom.PointCloud
 {
-    // 显色模式：灰度强度 / 按 HU 分类调色板 / 离散 LUT 伪彩，对应 shader _DicomColorMode 0/1/2
+    // 显色模式：灰度强度 / 按 HU 分类调色板 / 离散 LUT 伪彩 / 断点插值，对应 shader _DicomColorMode 0/1/2/3
     public enum DicomColorMode
     {
         Intensity = 0,
         Classification = 1,
-        Lut = 2
+        Lut = 2,
+        Breakpoint = 3
     }
 
     // 协调完整管线：后台解析 DICOM -> Burst 体素转点 -> 上传 ComputeBuffer -> 渲染
@@ -36,6 +37,9 @@ namespace Dicom.PointCloud
 
         // 离散 LUT 伪彩配置，未绑定则 LUT 模式不可用(SetColorMode 落回灰度)
         [SerializeField] DicomLutProfile _lutProfile;
+
+        // 断点插值显色配置，未绑定则断点模式不可用
+        [SerializeField] DicomBreakpointProfile _breakpointProfile;
 
         public event Action<float> OnProgress;
         public event Action<DicomDataset> OnLoaded;
@@ -70,16 +74,22 @@ namespace Dicom.PointCloud
         public float NormalizeMax => _normalizeMax;
         public DicomClassificationProfile ClassificationProfile => _classificationProfile;
         public DicomLutProfile LutProfile => _lutProfile;
+        public DicomBreakpointProfile BreakpointProfile => _breakpointProfile;
 
         static readonly int _ColorModeId = Shader.PropertyToID("_DicomColorMode");
         static readonly int _ClassColorsId = Shader.PropertyToID("_DicomClassColors");
         static readonly int _LutTexId = Shader.PropertyToID("_DicomLut");
+        static readonly int _BreakpointTexId = Shader.PropertyToID("_DicomBreakpointLut");
+        static readonly int _BreakpointDomainId = Shader.PropertyToID("_DicomBreakpointDomain");
+        static readonly int _NormalizeId = Shader.PropertyToID("_DicomNormalize");
 
         void Awake()
         {
             _pointCloud = GetComponent<DicomPointCloud>();
             ApplyPalette();
             ApplyLut();
+            ApplyBreakpointLut();
+            ApplyNormalize();
         }
 
         // 从目录异步加载，全程不阻塞主线程
@@ -271,6 +281,7 @@ namespace Dicom.PointCloud
         {
             _normalizeMin = min;
             _normalizeMax = max;
+            ApplyNormalize();
             if (_dataset != null) BuildPoints(_dataset);
         }
 
@@ -291,6 +302,13 @@ namespace Dicom.PointCloud
         {
             _lutProfile = profile;
             ApplyLut();
+        }
+
+        // 运行时更换断点配置，重新烘焙并上传纹理与值域
+        public void SetBreakpointProfile(DicomBreakpointProfile profile)
+        {
+            _breakpointProfile = profile;
+            ApplyBreakpointLut();
         }
 
         // 运行时更换分类配置，重建点云使新区间生效
@@ -342,6 +360,21 @@ namespace Dicom.PointCloud
             Shader.SetGlobalTexture(_LutTexId, _lutProfile.BakeLut());
         }
 
+        // 烘焙断点色带并上传 shader 全局纹理与值域，供断点显色模式采样
+        void ApplyBreakpointLut()
+        {
+            if (_breakpointProfile == null) return;
+            Shader.SetGlobalTexture(_BreakpointTexId, _breakpointProfile.BakeLut());
+            Shader.SetGlobalVector(_BreakpointDomainId,
+                new Vector4(_breakpointProfile.DomainMin, _breakpointProfile.DomainMax, 0f, 0f));
+        }
+
+        // 上传归一化范围,供断点模式 shader 端把 intensity 反推为真实值
+        void ApplyNormalize()
+        {
+            Shader.SetGlobalVector(_NormalizeId, new Vector4(_normalizeMin, _normalizeMax, 0f, 0f));
+        }
+
         // 从 profile 导出区间表为 NativeArray，无 profile 时返回零长数组
         void BuildClassRanges(out NativeArray<float> min, out NativeArray<float> max)
         {
@@ -374,6 +407,7 @@ namespace Dicom.PointCloud
             CancelOngoing();
             // 释放烘焙的 LUT 纹理，避免纹理泄漏(CLAUDE.md 资源生命周期约束)
             if (_lutProfile != null) _lutProfile.DestroyBaked();
+            if (_breakpointProfile != null) _breakpointProfile.DestroyBaked();
         }
     }
 }

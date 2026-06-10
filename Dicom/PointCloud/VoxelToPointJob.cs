@@ -89,7 +89,9 @@ namespace Dicom.PointCloud
                 int x = i % Width;
                 int y = i / Width;
                 float3 pos = (new float3(x, y, z) - half) * Spacing;
-                float intensity = math.saturate((real - NormalizeMin) / denom);
+                // 存原始归一化值(不 saturate):灰度/LUT/分类模式 shader 端会再 saturate,无副作用
+                // 断点模式据此反推真实值 real = intensity*(NormMax-NormMin)+NormMin
+                float intensity = (real - NormalizeMin) / denom;
                 float classId = ResolveClass(real, classCount);
 
                 Points[write++] = new DicomPoint { Position = pos, Intensity = intensity, ClassId = classId };

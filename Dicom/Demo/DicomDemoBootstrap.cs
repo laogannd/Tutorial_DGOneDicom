@@ -14,6 +14,7 @@ namespace Dicom.Demo
         [SerializeField] Material _pointMaterial;
         [SerializeField] DicomClassificationProfile _classificationProfile;
         [SerializeField] DicomLutProfile _lutProfile;
+        [SerializeField] DicomBreakpointProfile _breakpointProfile;
         [SerializeField] bool _autoLoadOnStart = true;
         [SerializeField] bool _attachDebugPanel = true;
 
@@ -42,6 +43,7 @@ namespace Dicom.Demo
             _controller = go.AddComponent<PointCloudController>();
             if (_classificationProfile != null) _controller.SetClassificationProfile(_classificationProfile);
             if (_lutProfile != null) _controller.SetLutProfile(_lutProfile);
+            if (_breakpointProfile != null) _controller.SetBreakpointProfile(_breakpointProfile);
             go.AddComponent<DicomGrabbableSetup>();
             go.AddComponent<TwoHandScaler>();
             var windowLevel = go.AddComponent<WindowLevelController>();

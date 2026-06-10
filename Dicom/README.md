@@ -195,7 +195,13 @@ Shader.SetGlobalVector(Shader.PropertyToID("_DicomTint"), new Vector4(1f, 0.9f, 
 - `GameObject > Dicom > 创建 VR 操作面板`：在当前场景生成世界空间面板。
 - `GameObject > Dicom > 创建 VR 操作面板并存为预制体`：生成面板并保存到 `Assets/!!Workspace/_Workspace/Script/Dicom/Prefabs`。
 
-面板包含加载状态、进度条、点大小、窗宽窗位、增益、RGB 色调、阈值、归一化、裁切开关和分类着色开关。`PokeSlider` 会自动为滑块配置 `BoxCollider` 与 AutoHand `HandTouchEvent`，手指触碰可推滑，射线拖动仍可使用。
+面板包含加载状态、进度条、点大小、窗宽窗位、增益、RGB 色调、阈值、归一化、裁切开关、显色模式开关（分类/LUT/断点）和 HU 区间分析。`PokeSlider` 会自动为滑块配置 `BoxCollider` 与 AutoHand `HandTouchEvent`，手指触碰可推滑，射线拖动仍可使用。
+
+新增能力：
+
+- HU 区间分析：加载完成后面板自动列出识别到的占用 HU 区间（区间范围、体素数、占比），点“一键应用到 Profile”可把区间写入分类配置并重建点云，功能对齐 `DicomDebugPanel`。
+- 全局统一字体：`DicomPanelUI` 暴露 `Global Font` 字段，赋值后运行时把面板内所有文本统一为该字体；中文显示需指定中文 TMP 字体。字段留空则保留预制体原字体。
+- 数据源自动配置：点云物体由 `DicomDemoBootstrap` 运行时动态创建，面板 `Start` 时可能尚未存在。开启 `Auto Bind Data Source`（默认开）后，面板未显式绑定时会全场景查找 `PointCloudController`，查不到则按 `Auto Bind Retry Interval` 间隔重试直到 `Auto Bind Timeout` 超时，找到后自动关联点云、窗宽窗位、裁切组件并刷新状态与 HU 区间。
 
 ### 5.7 抓取、双手缩放与裁切
 
@@ -327,3 +333,4 @@ A: 确认滑块物体上存在 `PokeSlider`、`BoxCollider` 和 AutoHand `HandTo
 | 260609.0 | 2026-06-09 | 新增 DICOM 点云系统用户手册，覆盖 10 秒规则、快速开始、配置、任务、限制和故障排除 |
 | 260609.1 | 2026-06-09 | 新增运行时调试面板 `DicomDebugPanel` 与加载诊断快照 `DicomLoadReport`；加载管线上报阶段、当前文件和耗时；shader 增加色调与强度增益 |
 | 260609.2 | 2026-06-09 | 按插件最新内容更新中英文手册：补充 Built-in/URP 双 SubShader、CT 分类配置、分类着色、世界空间 VR 操作面板、触碰滑块、配置参考、风险限制和验收检查 |
+| 260610.0 | 2026-06-10 | VR 操作面板对齐最新功能：新增 HU 区间分析与一键应用到 Profile、全局统一字体字段、数据源全场景查找与延迟重试自动配置 |
