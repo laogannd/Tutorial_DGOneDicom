@@ -44,7 +44,11 @@ namespace Dicom.Demo
             if (_classificationProfile != null) _controller.SetClassificationProfile(_classificationProfile);
             if (_lutProfile != null) _controller.SetLutProfile(_lutProfile);
             if (_breakpointProfile != null) _controller.SetBreakpointProfile(_breakpointProfile);
+            // 先挂 DicomGrabbableSetup，其 Awake 会建好刚体/碰撞体/Grabbable，
+            // 再挂 TwoHandScaler，避免它的 RequireComponent 抢先创建未就绪的 Grabbable
             go.AddComponent<DicomGrabbableSetup>();
+            // DicomModelTransform 在缩放器之前挂,TwoHandScaler.Awake 才能取到它做相对缩放基准
+            go.AddComponent<DicomModelTransform>();
             go.AddComponent<TwoHandScaler>();
             var windowLevel = go.AddComponent<WindowLevelController>();
             var clipping = go.AddComponent<ClippingPlaneController>();

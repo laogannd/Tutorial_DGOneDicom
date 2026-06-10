@@ -19,6 +19,7 @@ namespace Dicom.UI
         [SerializeField] DicomPointCloud _pointCloud;
         [SerializeField] WindowLevelController _windowLevel;
         [SerializeField] ClippingPlaneController _clipping;
+        [SerializeField] DicomModelTransform _modelTransform;
 
         [Header("数据源自动配置")]
         // 点云物体常由 DicomDemoBootstrap 运行时动态创建,面板 Start 时可能尚不存在
@@ -67,6 +68,11 @@ namespace Dicom.UI
         [SerializeField] Toggle _breakpointColorToggle;
         [SerializeField] Button _lutPresetButton;
         [SerializeField] TextMeshProUGUI _lutPresetLabel;
+
+        [Header("模型变换")]
+        [SerializeField] Slider _modelScaleSlider;
+        [SerializeField] TextMeshProUGUI _modelScaleLabel;
+        [SerializeField] Button _resetTransformButton;
 
         [Header("HU 区间分析")]
         [SerializeField] TextMeshProUGUI _huRangeText;
@@ -148,6 +154,11 @@ namespace Dicom.UI
                 _clipping = _controller.GetComponent<ClippingPlaneController>();
                 if (_clipping == null) _clipping = GetComponentInChildren<ClippingPlaneController>();
             }
+            if (_modelTransform == null)
+            {
+                _modelTransform = _controller.GetComponent<DicomModelTransform>();
+                if (_modelTransform == null) _modelTransform = GetComponentInChildren<DicomModelTransform>();
+            }
 
             BindControllerEvents();
             // 数据源到位后重新配置依赖 controller 的滑块范围与初值
@@ -212,6 +223,7 @@ namespace Dicom.UI
                 _breakpointColorToggle.onValueChanged.AddListener(OnBreakpointColorToggle);
             }
             if (_lutPresetButton != null) _lutPresetButton.onClick.AddListener(OnCycleLutPreset);
+            if (_resetTransformButton != null) _resetTransformButton.onClick.AddListener(OnResetTransform);
 
             RefreshAppearanceLabels();
             if (_huApplyHintLabel != null) _huApplyHintLabel.text = "";
@@ -232,9 +244,14 @@ namespace Dicom.UI
                 ConfigSlider(_normalizeMaxSlider, -1000f, 4000f, _controller.NormalizeMax, OnNormalizeLabelChanged);
             }
 
+            if (_modelTransform != null)
+                ConfigSlider(_modelScaleSlider, _modelTransform.MinScale, _modelTransform.MaxScale,
+                    _modelTransform.CurrentScale, OnModelScaleChanged);
+
             RefreshAppearanceLabels();
             RefreshThresholdLabels();
             RefreshNormalizeLabels();
+            RefreshModelScaleLabel();
         }
 
         void ConfigSlider(Slider s, float min, float max, float value, UnityEngine.Events.UnityAction<float> cb)
@@ -349,7 +366,13 @@ namespace Dicom.UI
         }
 
         // === 状态刷新 ===
-        void OnReportChanged(DicomLoadReport r) => RefreshStatus(r);
+        void OnReportChanged(DicomLoadReport r)
+        {
+            RefreshStatus(r);
+            // 加载完成时适配缩放才算出,据此刷新缩放滑块范围与当前值
+            if (r != null && r.Phase == DicomLoadPhase.Completed)
+                RefreshModelScale();
+        }
 
         // === HU 区间分析 ===
         // 加载完成后 controller 自动统计 HU 占用区间,在此刷新展示
@@ -428,6 +451,37 @@ namespace Dicom.UI
         {
             if (_progressFill == null) return;
             _progressFill.fillAmount = Mathf.Clamp01(ratio);
+        }
+
+        // === 模型变换 ===
+        void OnModelScaleChanged(float v)
+        {
+            if (_modelTransform != null) _modelTransform.SetScale(v);
+            RefreshModelScaleLabel();
+        }
+
+        // 一键复位位置/旋转/缩放到加载时状态,清速度防漂移
+        void OnResetTransform()
+        {
+            if (_modelTransform == null) return;
+            _modelTransform.ResetTransform();
+            RefreshModelScale();
+        }
+
+        // 加载完成或复位后,缩放值变化,刷新滑块当前值与标签
+        void RefreshModelScale()
+        {
+            if (_modelTransform == null || _modelScaleSlider == null) return;
+            _modelScaleSlider.minValue = _modelTransform.MinScale;
+            _modelScaleSlider.maxValue = _modelTransform.MaxScale;
+            _modelScaleSlider.SetValueWithoutNotify(_modelTransform.CurrentScale);
+            RefreshModelScaleLabel();
+        }
+
+        void RefreshModelScaleLabel()
+        {
+            if (_modelScaleLabel == null || _modelScaleSlider == null) return;
+            _modelScaleLabel.text = $"模型缩放: {_modelScaleSlider.value:F4}";
         }
 
         // === 标签刷新 ===

@@ -16,6 +16,7 @@ namespace Dicom.Demo
         [SerializeField] DicomPointCloud _pointCloud;
         [SerializeField] WindowLevelController _windowLevel;
         [SerializeField] ClippingPlaneController _clipping;
+        [SerializeField] DicomModelTransform _modelTransform;
 
         [SerializeField] bool _visible = true;
         [SerializeField] KeyCode _toggleKey = KeyCode.F1;
@@ -59,6 +60,7 @@ namespace Dicom.Demo
             if (_pointCloud == null) _pointCloud = GetComponentInChildren<DicomPointCloud>();
             if (_windowLevel == null) _windowLevel = GetComponentInChildren<WindowLevelController>();
             if (_clipping == null) _clipping = GetComponentInChildren<ClippingPlaneController>();
+            if (_modelTransform == null) _modelTransform = GetComponentInChildren<DicomModelTransform>();
 
             SyncFromComponents();
             ApplyTint();
@@ -106,6 +108,8 @@ namespace Dicom.Demo
             DrawHuRangeSection();
             GUILayout.Space(8);
             DrawAppearanceSection();
+            GUILayout.Space(8);
+            DrawModelTransformSection();
             GUILayout.Space(8);
             DrawRebuildSection();
             GUILayout.Space(8);
@@ -307,6 +311,22 @@ namespace Dicom.Demo
                 _tintR = tr; _tintG = tg; _tintB = tb;
                 ApplyTint();
             }
+        }
+
+        // 模型变换：等比缩放滑块 + 一键复位位置/大小,解决点云过大或被甩飞抓丢
+        void DrawModelTransformSection()
+        {
+            if (_modelTransform == null) return;
+            GUILayout.Label("模型变换", _header);
+
+            float cur = _modelTransform.CurrentScale;
+            GUILayout.Label($"缩放: {cur:F4}  (适配 {_modelTransform.FitScale:F4})");
+            float s = GUILayout.HorizontalSlider(cur, _modelTransform.MinScale, _modelTransform.MaxScale);
+            if (!Mathf.Approximately(s, cur))
+                _modelTransform.SetScale(s);
+
+            if (GUILayout.Button("复位位置/大小"))
+                _modelTransform.ResetTransform();
         }
 
         // 阈值/归一化：拖动只改面板值，点 Apply 才重建点云(防抖)

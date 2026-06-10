@@ -21,6 +21,9 @@ namespace Dicom.UI.EditorTools
             public Toggle ClipToggle, ClassColorToggle, LutColorToggle, BreakpointColorToggle;
             public Button LutPresetButton;
             public TextMeshProUGUI LutPresetLabel;
+            public Slider ModelScale;
+            public TextMeshProUGUI ModelScaleLabel;
+            public Button ResetTransformButton;
             public TextMeshProUGUI HuRangeText;
             public Button ApplyHuRangeButton;
             public TextMeshProUGUI HuApplyHintLabel;
@@ -73,6 +76,12 @@ namespace Dicom.UI.EditorTools
             r.BreakpointColorToggle = CreateToggle("BreakpointColorToggle", content, "断点插值显色");
             r.LutPresetLabel = CreateLabel("LutPresetLabel", content, "LUT 预设: HotIron", 18f, LabelHeight);
             r.LutPresetButton = CreateButton("LutPresetButton", content, "切换 LUT 预设");
+
+            // 模型变换区:等比缩放滑块 + 一键复位位置/大小
+            CreateHeader("ModelTransformHeader", content, "模型变换");
+            r.ModelScaleLabel = CreateLabel("ModelScaleLabel", content, "模型缩放", 18f, LabelHeight);
+            r.ModelScale = CreateSlider("ModelScaleSlider", content);
+            r.ResetTransformButton = CreateButton("ResetTransformButton", content, "复位位置/大小");
 
             // HU 区间分析区:加载后自动统计的占用区间列表 + 一键写入分类配置
             CreateHeader("HuRangeHeader", content, "HU 区间分析");
@@ -133,6 +142,9 @@ namespace Dicom.UI.EditorTools
             Set(so, "_breakpointColorToggle", r.BreakpointColorToggle);
             Set(so, "_lutPresetButton", r.LutPresetButton);
             Set(so, "_lutPresetLabel", r.LutPresetLabel);
+            Set(so, "_modelScaleSlider", r.ModelScale);
+            Set(so, "_modelScaleLabel", r.ModelScaleLabel);
+            Set(so, "_resetTransformButton", r.ResetTransformButton);
             Set(so, "_huRangeText", r.HuRangeText);
             Set(so, "_applyHuRangeButton", r.ApplyHuRangeButton);
             Set(so, "_huApplyHintLabel", r.HuApplyHintLabel);
