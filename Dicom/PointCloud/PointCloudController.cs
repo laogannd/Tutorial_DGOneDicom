@@ -13,6 +13,14 @@ using Dicom.Analysis;
 
 namespace Dicom.PointCloud
 {
+    // 显色模式：灰度强度 / 按 HU 分类调色板 / 离散 LUT 伪彩，对应 shader _DicomColorMode 0/1/2
+    public enum DicomColorMode
+    {
+        Intensity = 0,
+        Classification = 1,
+        Lut = 2
+    }
+
     // 协调完整管线：后台解析 DICOM -> Burst 体素转点 -> 上传 ComputeBuffer -> 渲染
     // 全程维护 DicomLoadReport 诊断快照，供调试面板读取阶段、进度、耗时与错误
     [RequireComponent(typeof(DicomPointCloud))]
@@ -25,6 +33,9 @@ namespace Dicom.PointCloud
 
         // HU 区间分类配置，未绑定则不分类(所有点 ClassId = -1)
         [SerializeField] DicomClassificationProfile _classificationProfile;
+
+        // 离散 LUT 伪彩配置，未绑定则 LUT 模式不可用(SetColorMode 落回灰度)
+        [SerializeField] DicomLutProfile _lutProfile;
 
         public event Action<float> OnProgress;
         public event Action<DicomDataset> OnLoaded;
@@ -58,14 +69,17 @@ namespace Dicom.PointCloud
         public float NormalizeMin => _normalizeMin;
         public float NormalizeMax => _normalizeMax;
         public DicomClassificationProfile ClassificationProfile => _classificationProfile;
+        public DicomLutProfile LutProfile => _lutProfile;
 
         static readonly int _ColorModeId = Shader.PropertyToID("_DicomColorMode");
         static readonly int _ClassColorsId = Shader.PropertyToID("_DicomClassColors");
+        static readonly int _LutTexId = Shader.PropertyToID("_DicomLut");
 
         void Awake()
         {
             _pointCloud = GetComponent<DicomPointCloud>();
             ApplyPalette();
+            ApplyLut();
         }
 
         // 从目录异步加载，全程不阻塞主线程
@@ -260,10 +274,23 @@ namespace Dicom.PointCloud
             if (_dataset != null) BuildPoints(_dataset);
         }
 
-        // 切换分类着色模式：纯 shader 全局变量，零重建
+        // 切换显色模式：纯 shader 全局变量，零重建。LUT 模式需先绑定 _lutProfile
+        public void SetColorMode(DicomColorMode mode)
+        {
+            Shader.SetGlobalFloat(_ColorModeId, (float)mode);
+        }
+
+        // 兼容旧调用：true=分类调色板，false=灰度强度
         public void SetColorMode(bool useClassification)
         {
-            Shader.SetGlobalFloat(_ColorModeId, useClassification ? 1f : 0f);
+            SetColorMode(useClassification ? DicomColorMode.Classification : DicomColorMode.Intensity);
+        }
+
+        // 运行时更换 LUT 配置，重新烘焙并上传纹理
+        public void SetLutProfile(DicomLutProfile profile)
+        {
+            _lutProfile = profile;
+            ApplyLut();
         }
 
         // 运行时更换分类配置，重建点云使新区间生效
@@ -308,6 +335,13 @@ namespace Dicom.PointCloud
             Shader.SetGlobalVectorArray(_ClassColorsId, _classificationProfile.GetPalette());
         }
 
+        // 烘焙离散 LUT 并上传 shader 全局纹理，供 LUT 显色模式采样
+        void ApplyLut()
+        {
+            if (_lutProfile == null) return;
+            Shader.SetGlobalTexture(_LutTexId, _lutProfile.BakeLut());
+        }
+
         // 从 profile 导出区间表为 NativeArray，无 profile 时返回零长数组
         void BuildClassRanges(out NativeArray<float> min, out NativeArray<float> max)
         {
@@ -335,6 +369,11 @@ namespace Dicom.PointCloud
             }
         }
 
-        void OnDestroy() => CancelOngoing();
+        void OnDestroy()
+        {
+            CancelOngoing();
+            // 释放烘焙的 LUT 纹理，避免纹理泄漏(CLAUDE.md 资源生命周期约束)
+            if (_lutProfile != null) _lutProfile.DestroyBaked();
+        }
     }
 }

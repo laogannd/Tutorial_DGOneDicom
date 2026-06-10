@@ -18,7 +18,9 @@ namespace Dicom.UI.EditorTools
             public Slider ThresholdMin, ThresholdMax, NormalizeMin, NormalizeMax;
             public TextMeshProUGUI ThresholdMinLabel, ThresholdMaxLabel, NormalizeMinLabel, NormalizeMaxLabel;
             public Button ApplyThreshold, ApplyNormalize;
-            public Toggle ClipToggle, ClassColorToggle;
+            public Toggle ClipToggle, ClassColorToggle, LutColorToggle;
+            public Button LutPresetButton;
+            public TextMeshProUGUI LutPresetLabel;
         }
 
         static PanelRefs BuildSections(RectTransform content)
@@ -64,6 +66,9 @@ namespace Dicom.UI.EditorTools
             CreateHeader("ToggleHeader", content, "开关");
             r.ClipToggle = CreateToggle("ClipToggle", content, "启用裁切平面");
             r.ClassColorToggle = CreateToggle("ClassColorToggle", content, "按标签分类着色");
+            r.LutColorToggle = CreateToggle("LutColorToggle", content, "离散 LUT 伪彩");
+            r.LutPresetLabel = CreateLabel("LutPresetLabel", content, "LUT 预设: HotIron", 18f, LabelHeight);
+            r.LutPresetButton = CreateButton("LutPresetButton", content, "切换 LUT 预设");
 
             return r;
         }
@@ -114,6 +119,9 @@ namespace Dicom.UI.EditorTools
             Set(so, "_applyNormalizeButton", r.ApplyNormalize);
             Set(so, "_clipToggle", r.ClipToggle);
             Set(so, "_classColorToggle", r.ClassColorToggle);
+            Set(so, "_lutColorToggle", r.LutColorToggle);
+            Set(so, "_lutPresetButton", r.LutPresetButton);
+            Set(so, "_lutPresetLabel", r.LutPresetLabel);
             so.ApplyModifiedPropertiesWithoutUndo();
         }
 

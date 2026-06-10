@@ -13,6 +13,7 @@ namespace Dicom.Demo
         [SerializeField] string _relativeDir = "dicom";
         [SerializeField] Material _pointMaterial;
         [SerializeField] DicomClassificationProfile _classificationProfile;
+        [SerializeField] DicomLutProfile _lutProfile;
         [SerializeField] bool _autoLoadOnStart = true;
         [SerializeField] bool _attachDebugPanel = true;
 
@@ -40,6 +41,7 @@ namespace Dicom.Demo
 
             _controller = go.AddComponent<PointCloudController>();
             if (_classificationProfile != null) _controller.SetClassificationProfile(_classificationProfile);
+            if (_lutProfile != null) _controller.SetLutProfile(_lutProfile);
             go.AddComponent<DicomGrabbableSetup>();
             go.AddComponent<TwoHandScaler>();
             var windowLevel = go.AddComponent<WindowLevelController>();

@@ -42,10 +42,13 @@ Shader "Dicom/PointCloud"
             float4 _DicomWindow;
             // 外观：rgb 色调，a 强度增益
             float4 _DicomTint;
-            // 分类着色：0=强度灰度，1=按类别调色板着色
+            // 显色模式：0=强度灰度，1=按类别调色板着色，2=离散 LUT 伪彩
             float _DicomColorMode;
             // 分类调色板，索引与 DicomClassificationProfile 类别顺序一致
             float4 _DicomClassColors[16];
+            // 离散查找表纹理(宽=色阶数，Point 过滤)，按归一化强度采样取伪彩色
+            TEXTURE2D(_DicomLut);
+            SAMPLER(sampler_DicomLut);
 
             struct Varyings
             {
@@ -94,6 +97,13 @@ Shader "Dicom/PointCloud"
                 float c = _DicomWindow.x;
                 float w = max(_DicomWindow.y, 1e-4);
                 float g = saturate((i.intensity - (c - w * 0.5)) / w);
+
+                // 离散 LUT 模式：归一化强度作 u 坐标采样伪彩查找表(Point 过滤出硬色阶)
+                if (_DicomColorMode > 1.5)
+                {
+                    half4 lut = SAMPLE_TEXTURE2D(_DicomLut, sampler_DicomLut, float2(g, 0.5));
+                    return half4(lut.rgb, 1.0);
+                }
 
                 // 分类着色模式：按类别取调色板色，乘强度做明暗；未分类(<0)落回灰度
                 if (_DicomColorMode > 0.5 && i.classId >= 0)
@@ -147,6 +157,8 @@ Shader "Dicom/PointCloud"
             float4 _DicomTint;
             float _DicomColorMode;
             float4 _DicomClassColors[16];
+            // 离散查找表纹理(宽=色阶数，Point 过滤)，按归一化强度采样取伪彩色
+            sampler2D _DicomLut;
 
             struct Varyings
             {
@@ -192,6 +204,13 @@ Shader "Dicom/PointCloud"
                 float c = _DicomWindow.x;
                 float w = max(_DicomWindow.y, 1e-4);
                 float g = saturate((i.intensity - (c - w * 0.5)) / w);
+
+                // 离散 LUT 模式：归一化强度作 u 坐标采样伪彩查找表(Point 过滤出硬色阶)
+                if (_DicomColorMode > 1.5)
+                {
+                    fixed4 lut = tex2D(_DicomLut, float2(g, 0.5));
+                    return fixed4(lut.rgb, 1.0);
+                }
 
                 // 分类着色模式：按类别取调色板色，乘强度做明暗；未分类(<0)落回灰度
                 if (_DicomColorMode > 0.5 && i.classId >= 0)

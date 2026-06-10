@@ -35,8 +35,11 @@ namespace Dicom.Demo
 
         bool _clipEnabled = true;
 
-        // 分类着色开关：开启则按 profile 调色板着色，关闭则灰度
-        bool _useClassification = true;
+        // 显色模式：灰度强度 / 分类调色板 / 离散 LUT 伪彩，三选一
+        DicomColorMode _colorMode = DicomColorMode.Classification;
+        static readonly string[] _colorModeNames = { "灰度", "分类", "LUT" };
+        // LUT 预设名,顺序须与 DicomLutProfile.LutPreset 枚举一致
+        static readonly string[] _lutPresetNames = { "Custom", "热铁", "彩虹", "骨窗", "灰反" };
 
         // HU 一键应用结果提示
         string _huApplyHint = "";
@@ -59,8 +62,8 @@ namespace Dicom.Demo
 
             SyncFromComponents();
             ApplyTint();
-            // 初始化分类着色模式,否则 shader 全局变量默认 0 始终走灰度分支,profile 颜色不生效
-            if (_controller != null) _controller.SetColorMode(_useClassification);
+            // 初始化显色模式,否则 shader 全局变量默认 0 始终走灰度分支,profile 颜色不生效
+            if (_controller != null) _controller.SetColorMode(_colorMode);
         }
 
         // 把当前组件参数读回面板，避免面板默认值覆盖 Inspector 配置
@@ -225,12 +228,26 @@ namespace Dicom.Demo
         {
             GUILayout.Label("外观 (实时)", _header);
 
-            // 分类着色开关:开启走 profile 调色板,关闭走灰度+色调
-            bool useClass = GUILayout.Toggle(_useClassification, " 分类着色 (按 Profile 颜色)");
-            if (useClass != _useClassification)
+            // 显色模式三选一:灰度强度 / 分类调色板 / 离散 LUT 伪彩
+            GUILayout.Label("显色模式", _header);
+            int modeIdx = GUILayout.Toolbar((int)_colorMode, _colorModeNames);
+            if (modeIdx != (int)_colorMode)
             {
-                _useClassification = useClass;
-                if (_controller != null) _controller.SetColorMode(useClass);
+                _colorMode = (DicomColorMode)modeIdx;
+                if (_controller != null) _controller.SetColorMode(_colorMode);
+            }
+
+            // LUT 模式下显示预设选择,切换即重新烘焙上传
+            if (_colorMode == DicomColorMode.Lut && _controller != null && _controller.LutProfile != null)
+            {
+                var profile = _controller.LutProfile;
+                GUILayout.Label($"LUT 预设: {profile.Preset}");
+                int presetIdx = GUILayout.Toolbar((int)profile.Preset, _lutPresetNames);
+                if (presetIdx != (int)profile.Preset)
+                {
+                    profile.SetPreset((DicomLutProfile.LutPreset)presetIdx);
+                    _controller.SetLutProfile(profile);
+                }
             }
 
             if (_pointCloud != null)

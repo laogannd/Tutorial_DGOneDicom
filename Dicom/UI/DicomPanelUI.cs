@@ -51,6 +51,9 @@ namespace Dicom.UI
         [Header("开关")]
         [SerializeField] Toggle _clipToggle;
         [SerializeField] Toggle _classColorToggle;
+        [SerializeField] Toggle _lutColorToggle;
+        [SerializeField] Button _lutPresetButton;
+        [SerializeField] TextMeshProUGUI _lutPresetLabel;
 
         float _tintR = 1f, _tintG = 1f, _tintB = 1f, _gain = 1f;
 
@@ -112,6 +115,13 @@ namespace Dicom.UI
                 _classColorToggle.isOn = false;
                 _classColorToggle.onValueChanged.AddListener(OnClassColorToggle);
             }
+            if (_lutColorToggle != null)
+            {
+                _lutColorToggle.isOn = false;
+                _lutColorToggle.onValueChanged.AddListener(OnLutColorToggle);
+            }
+            if (_lutPresetButton != null) _lutPresetButton.onClick.AddListener(OnCycleLutPreset);
+            RefreshLutPresetLabel();
 
             RefreshAppearanceLabels();
             RefreshThresholdLabels();
@@ -173,9 +183,41 @@ namespace Dicom.UI
             if (_clipping != null) _clipping.SetEnabled(on);
         }
 
+        // 分类与 LUT 两个 Toggle 互斥,组合出三态:都关=灰度,分类开=分类着色,LUT 开=离散伪彩
         void OnClassColorToggle(bool on)
         {
-            if (_controller != null) _controller.SetColorMode(on);
+            if (_controller == null) return;
+            if (on && _lutColorToggle != null) _lutColorToggle.SetIsOnWithoutNotify(false);
+            _controller.SetColorMode(on ? DicomColorMode.Classification : DicomColorMode.Intensity);
+        }
+
+        void OnLutColorToggle(bool on)
+        {
+            if (_controller == null) return;
+            if (on && _classColorToggle != null) _classColorToggle.SetIsOnWithoutNotify(false);
+            _controller.SetColorMode(on ? DicomColorMode.Lut : DicomColorMode.Intensity);
+        }
+
+        // 循环切换 LUT 预设并重新烘焙上传,仅在 LUT 模式可见时有意义
+        void OnCycleLutPreset()
+        {
+            if (_controller == null) return;
+            var profile = _controller.LutProfile;
+            if (profile == null) return;
+
+            int count = System.Enum.GetValues(typeof(DicomLutProfile.LutPreset)).Length;
+            // 跳过 Custom(索引 0),在内置预设间循环
+            int next = (int)profile.Preset + 1;
+            if (next >= count) next = 1;
+            profile.SetPreset((DicomLutProfile.LutPreset)next);
+            _controller.SetLutProfile(profile);
+            RefreshLutPresetLabel();
+        }
+
+        void RefreshLutPresetLabel()
+        {
+            if (_lutPresetLabel == null || _controller == null || _controller.LutProfile == null) return;
+            _lutPresetLabel.text = $"LUT 预设: {_controller.LutProfile.Preset}";
         }
 
         // === 状态刷新 ===
