@@ -12,6 +12,10 @@ namespace Dicom.Core
         // 体素物理间距(mm)：xy 来自 PixelSpacing，z 来自 SliceThickness 或切片间距
         public float3 Spacing = new float3(1f, 1f, 1f);
 
+        // 从 ImageOrientationPatient 检测出的切片堆叠轴指向的患者轴：0=X(矢状) 1=Y(冠状) 2=Z(横断)
+        // 默认 2 与无方向信息时的横断面假设一致
+        public int StackAxis = 2;
+
         // 像素值线性变换：真实值 = stored * RescaleSlope + RescaleIntercept
         public float RescaleSlope = 1f;
         public float RescaleIntercept = 0f;

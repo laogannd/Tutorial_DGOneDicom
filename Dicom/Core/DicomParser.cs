@@ -1,5 +1,6 @@
 using System;
 using System.Text;
+using Unity.Mathematics;
 
 namespace Dicom.Core
 {
@@ -11,7 +12,12 @@ namespace Dicom.Core
         public float PixelSpacingX;
         public float PixelSpacingY;
         public float SliceThickness;
-        public float ImagePositionZ;
+        // ImagePositionPatient(0020,0032) 切片左上角患者坐标(mm)，三轴完整保留供按法向排序
+        public float3 ImagePosition;
+        // ImageOrientationPatient(0020,0037) 行/列方向余弦，叉乘得切片法向(堆叠方向)
+        public float3 OrientationRow;
+        public float3 OrientationCol;
+        public bool HasOrientation;
         public int InstanceNumber;
         public float RescaleSlope;
         public float RescaleIntercept;
@@ -20,6 +26,9 @@ namespace Dicom.Core
         public int BitsAllocated;
         public bool PixelRepresentationSigned;
         public short[] Pixels;
+
+        // z 分量兼容旧调用(横断面排序回退用)
+        public float ImagePositionZ => ImagePosition.z;
     }
 
     // 精简 DICOM 解析器：只读必要 Tag 与非压缩 16bit 像素，无第三方依赖，IL2CPP/Android 安全
@@ -184,7 +193,17 @@ namespace Dicom.Core
                 else if (element == 0x0032) // ImagePositionPatient: x\y\z
                 {
                     var ipp = SplitDecimals(data, pos, length);
-                    if (ipp.Length >= 3) slice.ImagePositionZ = ipp[2];
+                    if (ipp.Length >= 3) slice.ImagePosition = new float3(ipp[0], ipp[1], ipp[2]);
+                }
+                else if (element == 0x0037) // ImageOrientationPatient: 行余弦(3) \ 列余弦(3)
+                {
+                    var iop = SplitDecimals(data, pos, length);
+                    if (iop.Length >= 6)
+                    {
+                        slice.OrientationRow = new float3(iop[0], iop[1], iop[2]);
+                        slice.OrientationCol = new float3(iop[3], iop[4], iop[5]);
+                        slice.HasOrientation = true;
+                    }
                 }
             }
         }

@@ -41,6 +41,8 @@ namespace Dicom.Demo
         static readonly string[] _colorModeNames = { "灰度", "分类", "LUT", "断点" };
         // LUT 预设名,顺序须与 DicomLutProfile.LutPreset 枚举一致
         static readonly string[] _lutPresetNames = { "Custom", "热铁", "彩虹", "骨窗", "灰反" };
+        // 重建方向名,顺序须与 DicomReconstructAxis 枚举一致(X=0 Y=1 Z=2)
+        static readonly string[] _reconstructAxisNames = { "X 轴", "Y 轴", "Z 轴" };
 
         // HU 一键应用结果提示
         string _huApplyHint = "";
@@ -350,6 +352,18 @@ namespace Dicom.Demo
             if (GUILayout.Button("Apply 归一化") && _controller != null)
                 _controller.SetNormalize(_normalizeMin, _normalizeMax);
             GUILayout.EndHorizontal();
+
+            // 重建方向:切片堆叠轴映射到的世界轴 X/Y/Z,切换即重建;刷新按钮用当前设置重建
+            if (_controller != null)
+            {
+                GUILayout.Label($"重建方向: {_controller.ReconstructAxis} 轴");
+                int axisIdx = GUILayout.Toolbar((int)_controller.ReconstructAxis, _reconstructAxisNames);
+                if (axisIdx != (int)_controller.ReconstructAxis)
+                    _controller.SetReconstructAxis((DicomReconstructAxis)axisIdx);
+
+                if (GUILayout.Button("刷新重建点云"))
+                    _controller.Rebuild();
+            }
         }
 
         void DrawClippingSection()

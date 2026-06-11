@@ -64,6 +64,9 @@ namespace Dicom.PointCloud
         public float NormalizeMin;
         public float NormalizeMax;
 
+        // 切片堆叠轴指向的世界轴：0=X 1=Y 2=Z(默认)，决定点云按哪个方向重建
+        public int ReconstructAxis;
+
         // 分类区间表(HU 下限/上限)，长度即类别数；为空则所有点 ClassId = -1
         [ReadOnly] public NativeArray<float> ClassHuMin;
         [ReadOnly] public NativeArray<float> ClassHuMax;
@@ -89,6 +92,8 @@ namespace Dicom.PointCloud
                 int x = i % Width;
                 int y = i / Width;
                 float3 pos = (new float3(x, y, z) - half) * Spacing;
+                // 切片堆叠轴(z)与目标世界轴互换，实现按 X/Y/Z 重建方向加载
+                pos = RemapAxis(pos);
                 // 存原始归一化值(不 saturate):灰度/LUT/分类模式 shader 端会再 saturate,无副作用
                 // 断点模式据此反推真实值 real = intensity*(NormMax-NormMin)+NormMin
                 float intensity = (real - NormalizeMin) / denom;
@@ -104,6 +109,17 @@ namespace Dicom.PointCloud
             for (int c = 0; c < classCount; c++)
                 if (hu >= ClassHuMin[c] && hu < ClassHuMax[c]) return c;
             return -1f;
+        }
+
+        // 把切片堆叠轴(局部 z)交换到目标世界轴：0=X 与 x 互换，1=Y 与 y 互换，2=Z 保持原样
+        float3 RemapAxis(float3 p)
+        {
+            switch (ReconstructAxis)
+            {
+                case 0: return new float3(p.z, p.y, p.x);
+                case 1: return new float3(p.x, p.z, p.y);
+                default: return p;
+            }
         }
     }
 }

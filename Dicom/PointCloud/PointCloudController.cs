@@ -22,15 +22,25 @@ namespace Dicom.PointCloud
         Breakpoint = 3
     }
 
+    // 切片堆叠轴指向的世界轴，决定点云按哪个方向重建；值与 Job 的 ReconstructAxis 一致
+    public enum DicomReconstructAxis
+    {
+        X = 0,
+        Y = 1,
+        Z = 2
+    }
+
     // 协调完整管线：后台解析 DICOM -> Burst 体素转点 -> 上传 ComputeBuffer -> 渲染
     // 全程维护 DicomLoadReport 诊断快照，供调试面板读取阶段、进度、耗时与错误
     [RequireComponent(typeof(DicomPointCloud))]
     public class PointCloudController : MonoBehaviour
-    {
-        [SerializeField] float _thresholdMin = 200f;
+    {        [SerializeField] float _thresholdMin = 200f;
         [SerializeField] float _thresholdMax = 3000f;
         [SerializeField] float _normalizeMin = 200f;
         [SerializeField] float _normalizeMax = 1500f;
+
+        // 重建方向：切片堆叠轴映射到的世界轴，默认 Z(与原行为一致)
+        [SerializeField] DicomReconstructAxis _reconstructAxis = DicomReconstructAxis.Z;
 
         // HU 区间分类配置，未绑定则不分类(所有点 ClassId = -1)
         [SerializeField] DicomClassificationProfile _classificationProfile;
@@ -72,6 +82,7 @@ namespace Dicom.PointCloud
         public float ThresholdMax => _thresholdMax;
         public float NormalizeMin => _normalizeMin;
         public float NormalizeMax => _normalizeMax;
+        public DicomReconstructAxis ReconstructAxis => _reconstructAxis;
         public DicomClassificationProfile ClassificationProfile => _classificationProfile;
         public DicomLutProfile LutProfile => _lutProfile;
         public DicomBreakpointProfile BreakpointProfile => _breakpointProfile;
@@ -125,6 +136,9 @@ namespace Dicom.PointCloud
                 _report.Width = dataset.Width;
                 _report.Height = dataset.Height;
                 _report.Depth = dataset.Depth;
+
+                // 采用 DICOM 元数据检测出的切片堆叠轴作为重建方向,纠正冠状/矢状序列默认按 Z 重建的错误
+                _reconstructAxis = (DicomReconstructAxis)dataset.StackAxis;
 
                 BuildPoints(dataset);
 
@@ -180,10 +194,11 @@ namespace Dicom.PointCloud
             int depth = dataset.Depth;
 
             // 体积世界尺寸(与 WritePointsJob 的位置计算一致)，供点云 bounds 剔除
-            _pointCloud.SetLocalSize(new Vector3(
+            // 按重建轴重排尺寸分量，与 Job 内 RemapAxis 保持一致
+            _pointCloud.SetLocalSize(RemapSize(new Vector3(
                 dataset.Width * dataset.Spacing.x,
                 dataset.Height * dataset.Spacing.y,
-                dataset.Depth * dataset.Spacing.z));
+                dataset.Depth * dataset.Spacing.z)));
 
             var voxels = new NativeArray<short>(dataset.Voxels, Allocator.TempJob);
             var sliceCounts = new NativeArray<int>(depth, Allocator.TempJob);
@@ -244,6 +259,7 @@ namespace Dicom.PointCloud
                 ThresholdMax = _thresholdMax,
                 NormalizeMin = _normalizeMin,
                 NormalizeMax = _normalizeMax,
+                ReconstructAxis = (int)_reconstructAxis,
                 ClassHuMin = classMin,
                 ClassHuMax = classMax,
                 Points = points
@@ -283,6 +299,30 @@ namespace Dicom.PointCloud
             _normalizeMax = max;
             ApplyNormalize();
             if (_dataset != null) BuildPoints(_dataset);
+        }
+
+        // 运行时切换重建方向(切片堆叠轴映射到的世界轴)，需重建点云
+        public void SetReconstructAxis(DicomReconstructAxis axis)
+        {
+            _reconstructAxis = axis;
+            if (_dataset != null) BuildPoints(_dataset);
+        }
+
+        // 用当前全部设置重新生成点云，数据源未就绪时静默忽略
+        public void Rebuild()
+        {
+            if (_dataset != null) BuildPoints(_dataset);
+        }
+
+        // 按重建轴重排尺寸分量，与 Job 内 RemapAxis 一致(X 与 Z 互换 / Y 与 Z 互换 / 保持)
+        Vector3 RemapSize(Vector3 s)
+        {
+            switch (_reconstructAxis)
+            {
+                case DicomReconstructAxis.X: return new Vector3(s.z, s.y, s.x);
+                case DicomReconstructAxis.Y: return new Vector3(s.x, s.z, s.y);
+                default: return s;
+            }
         }
 
         // 切换显色模式：纯 shader 全局变量，零重建。LUT 模式需先绑定 _lutProfile

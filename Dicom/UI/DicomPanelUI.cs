@@ -61,6 +61,12 @@ namespace Dicom.UI
         [SerializeField] Button _applyThresholdButton;
         [SerializeField] Button _applyNormalizeButton;
 
+        [Header("重建方向")]
+        // 循环切换 X/Y/Z 重建轴的按钮 + 当前轴标签，刷新按钮用当前设置重建点云
+        [SerializeField] Button _reconstructAxisButton;
+        [SerializeField] TextMeshProUGUI _reconstructAxisLabel;
+        [SerializeField] Button _rebuildButton;
+
         [Header("开关")]
         [SerializeField] Toggle _clipToggle;
         [SerializeField] Toggle _classColorToggle;
@@ -175,6 +181,7 @@ namespace Dicom.UI
             // 初始化显色模式,否则 shader _DicomColorMode 默认 0 始终走灰度,profile 颜色不生效
             _controller.SetColorMode(DicomColorMode.Intensity);
             RefreshLutPresetLabel();
+            RefreshReconstructAxisLabel();
             RefreshStatus(_controller.Report);
             RefreshHuRange(_controller.HuReport);
         }
@@ -201,6 +208,8 @@ namespace Dicom.UI
             if (_applyThresholdButton != null) _applyThresholdButton.onClick.AddListener(OnApplyThreshold);
             if (_applyNormalizeButton != null) _applyNormalizeButton.onClick.AddListener(OnApplyNormalize);
             if (_applyHuRangeButton != null) _applyHuRangeButton.onClick.AddListener(OnApplyHuRange);
+            if (_reconstructAxisButton != null) _reconstructAxisButton.onClick.AddListener(OnCycleReconstructAxis);
+            if (_rebuildButton != null) _rebuildButton.onClick.AddListener(OnRebuild);
 
             if (_clipToggle != null)
             {
@@ -365,13 +374,40 @@ namespace Dicom.UI
             _lutPresetLabel.text = $"LUT 预设: {_controller.LutProfile.Preset}";
         }
 
+        // === 重建方向 ===
+        // 循环切换 X -> Y -> Z 重建轴，切换即重建点云
+        void OnCycleReconstructAxis()
+        {
+            if (_controller == null) return;
+            int count = System.Enum.GetValues(typeof(DicomReconstructAxis)).Length;
+            int next = ((int)_controller.ReconstructAxis + 1) % count;
+            _controller.SetReconstructAxis((DicomReconstructAxis)next);
+            RefreshReconstructAxisLabel();
+        }
+
+        // 用当前全部设置重新生成点云
+        void OnRebuild()
+        {
+            if (_controller != null) _controller.Rebuild();
+        }
+
+        void RefreshReconstructAxisLabel()
+        {
+            if (_reconstructAxisLabel == null || _controller == null) return;
+            _reconstructAxisLabel.text = $"重建方向: {_controller.ReconstructAxis} 轴";
+        }
+
         // === 状态刷新 ===
         void OnReportChanged(DicomLoadReport r)
         {
             RefreshStatus(r);
             // 加载完成时适配缩放才算出,据此刷新缩放滑块范围与当前值
             if (r != null && r.Phase == DicomLoadPhase.Completed)
+            {
                 RefreshModelScale();
+                // 加载时重建方向已按 DICOM 元数据自动检测,刷新标签反映真实堆叠轴
+                RefreshReconstructAxisLabel();
+            }
         }
 
         // === HU 区间分析 ===

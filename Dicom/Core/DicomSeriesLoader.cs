@@ -65,19 +65,41 @@ namespace Dicom.Core
                 progress?.Invoke(new Progress { Phase = DicomLoadPhase.Parsing, Done = done, Total = total, CurrentFile = name });
             }
 
-            // 优先按 ImagePositionPatient.z 排序，缺失则退化到 InstanceNumber
+            // 排序与堆叠轴检测:有方向信息则按切片法向投影排序,否则退化到 z / InstanceNumber
             progress?.Invoke(new Progress { Phase = DicomLoadPhase.Sorting, Done = total, Total = total, CurrentFile = "" });
-            bool hasPosition = slices.Exists(s => s.ImagePositionZ != 0f);
-            if (hasPosition)
-                slices.Sort((a, b) => a.ImagePositionZ.CompareTo(b.ImagePositionZ));
+
+            // 切片法向 = 行余弦 x 列余弦,代表切片堆叠前进方向;整序列取首片方向
+            bool hasOrientation = slices[0].HasOrientation;
+            float3 normal = hasOrientation
+                ? math.normalize(math.cross(slices[0].OrientationRow, slices[0].OrientationCol))
+                : new float3(0f, 0f, 1f);
+
+            if (hasOrientation)
+                // 按各切片位置在法向上的投影排序,适用于横断/冠状/矢状任意朝向
+                slices.Sort((a, b) => math.dot(a.ImagePosition, normal).CompareTo(math.dot(b.ImagePosition, normal)));
             else
-                slices.Sort((a, b) => a.InstanceNumber.CompareTo(b.InstanceNumber));
+            {
+                bool hasPosition = slices.Exists(s => s.ImagePositionZ != 0f);
+                if (hasPosition)
+                    slices.Sort((a, b) => a.ImagePositionZ.CompareTo(b.ImagePositionZ));
+                else
+                    slices.Sort((a, b) => a.InstanceNumber.CompareTo(b.InstanceNumber));
+            }
 
             progress?.Invoke(new Progress { Phase = DicomLoadPhase.Assembling, Done = total, Total = total, CurrentFile = "" });
-            return Assemble(slices, token);
+            return Assemble(slices, normal, hasOrientation, token);
         }
 
-        static DicomDataset Assemble(List<DicomSlice> slices, CancellationToken token)
+        // 法向量最接近的患者轴即堆叠轴:0=X(矢状) 1=Y(冠状) 2=Z(横断)
+        static int DetectStackAxis(float3 normal)
+        {
+            float3 a = math.abs(normal);
+            if (a.x >= a.y && a.x >= a.z) return 0;
+            if (a.y >= a.z) return 1;
+            return 2;
+        }
+
+        static DicomDataset Assemble(List<DicomSlice> slices, float3 normal, bool hasOrientation, CancellationToken token)
         {
             var first = slices[0];
             int width = first.Columns;
@@ -100,14 +122,19 @@ namespace Dicom.Core
                 WindowWidth = first.WindowWidth
             };
 
-            // z 间距：优先用相邻切片位置差，否则用层厚
+            // z 间距：优先用相邻切片沿法向的位置差，否则用层厚
             float zSpacing = first.SliceThickness;
             if (slices.Count > 1)
             {
-                float diff = math.abs(slices[1].ImagePositionZ - slices[0].ImagePositionZ);
+                float diff = hasOrientation
+                    ? math.abs(math.dot(slices[1].ImagePosition - slices[0].ImagePosition, normal))
+                    : math.abs(slices[1].ImagePositionZ - slices[0].ImagePositionZ);
                 if (diff > 0.0001f) zSpacing = diff;
             }
             dataset.Spacing = new float3(first.PixelSpacingX, first.PixelSpacingY, zSpacing);
+
+            // 检测切片堆叠轴指向的患者轴,供点云按真实重建方向生成(无方向信息默认横断 Z)
+            dataset.StackAxis = hasOrientation ? DetectStackAxis(normal) : 2;
 
             int sliceLen = width * height;
             var voxels = new short[sliceLen * depth];
