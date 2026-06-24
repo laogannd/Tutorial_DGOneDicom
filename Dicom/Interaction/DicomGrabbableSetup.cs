@@ -1,7 +1,6 @@
 using UnityEngine;
 using Autohand;
 
-using Dicom.Core;
 using Dicom.PointCloud;
 
 namespace Dicom.Interaction
@@ -13,6 +12,10 @@ namespace Dicom.Interaction
     {
         [SerializeField] float _mass = 1f;
 
+        // 预设要忽略的碰撞层:无论 Physics 碰撞矩阵如何,点云碰撞体都不与这些层产生物理碰撞
+        // 自身仍在 AutoHand 的 grabbable 层,排除层不影响手的抓取检测
+        [SerializeField] LayerMask _excludeLayers;
+
         PointCloudController _controller;
         Grabbable _grabbable;
         BoxCollider _collider;
@@ -20,10 +23,24 @@ namespace Dicom.Interaction
 
         public Grabbable Grabbable => _grabbable;
 
+        // 预设排除层:运行时动态挂载时由外部(如 DicomDemoBootstrap)统一传入
+        // 赋值即应用到已建好的刚体/碰撞体,后续重建也会保持
+        public LayerMask ExcludeLayers
+        {
+            get => _excludeLayers;
+            set
+            {
+                _excludeLayers = value;
+                if (_rigidbody != null) _rigidbody.excludeLayers = value;
+                if (_collider != null) _collider.excludeLayers = value;
+            }
+        }
+
         void Awake()
         {
             _controller = GetComponent<PointCloudController>();
-            _controller.OnLoaded += OnDatasetLoaded;
+            // 订阅包围盒变化:每次重建(调阈值/方向/归一化)都刷新碰撞盒,紧贴当前可见点云
+            _controller.OnBoundsChanged += OnBoundsChanged;
             // 立即建好刚体/碰撞体/Grabbable，避免 TwoHandScaler 的 RequireComponent
             // 抢先创建 Grabbable 时刚体与碰撞体尚未就绪，导致 Grabbable.Awake 注册失败
             EnsureComponents();
@@ -32,7 +49,7 @@ namespace Dicom.Interaction
         void OnDestroy()
         {
             if (_controller != null)
-                _controller.OnLoaded -= OnDatasetLoaded;
+                _controller.OnBoundsChanged -= OnBoundsChanged;
             if (_grabbable != null)
             {
                 _grabbable.OnGrabEvent -= OnGrabbed;
@@ -40,17 +57,12 @@ namespace Dicom.Interaction
             }
         }
 
-        // 加载完成才知道体积尺寸，据此配置碰撞盒
-        void OnDatasetLoaded(DicomDataset dataset)
+        // 点云重建后据可见点真实 AABB 配置碰撞盒;过滤后点云常偏一侧,中心随之偏移
+        void OnBoundsChanged(Bounds bounds)
         {
             EnsureComponents();
-            // 包围盒尺寸 = 体素数 * 间距，与 Job 中以中心为原点的点布局对齐
-            var size = new Vector3(
-                dataset.Width * dataset.Spacing.x,
-                dataset.Height * dataset.Spacing.y,
-                dataset.Depth * dataset.Spacing.z);
-            _collider.center = Vector3.zero;
-            _collider.size = size;
+            _collider.center = bounds.center;
+            _collider.size = bounds.size;
             // 碰撞盒尺寸变更后让 Grabbable 重新登记碰撞体与抓取层
             _grabbable.body = _rigidbody;
             _grabbable.UpdateGrabbableColliderSettings();
@@ -80,6 +92,10 @@ namespace Dicom.Interaction
 
             // 显式设到 Grabbable 层，AutoHand 的手只在该层做 OverlapSphere 检测
             gameObject.layer = LayerMask.NameToLayer(Hand.grabbableLayerNameDefault);
+
+            // 应用预设排除层:刚体与碰撞体都设,确保物理碰撞被忽略且重建后仍生效
+            _rigidbody.excludeLayers = _excludeLayers;
+            _collider.excludeLayers = _excludeLayers;
 
             // 最后建 Grabbable，此时刚体与碰撞体均已就绪
             if (_grabbable == null)

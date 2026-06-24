@@ -69,6 +69,8 @@ namespace Dicom.UI
 
         [Header("开关")]
         [SerializeField] Toggle _clipToggle;
+        [SerializeField] Button _spawnClipButton;
+        [SerializeField] Button _clearClipButton;
         [SerializeField] Toggle _classColorToggle;
         [SerializeField] Toggle _lutColorToggle;
         [SerializeField] Toggle _breakpointColorToggle;
@@ -86,6 +88,9 @@ namespace Dicom.UI
         [SerializeField] TextMeshProUGUI _huApplyHintLabel;
 
         float _tintR = 1f, _tintG = 1f, _tintB = 1f, _gain = 1f;
+
+        // 尺寸标签缓存:位姿每帧可能触发,仅在文本变化时才重拼字符串避免 GC
+        string _lastModelLabel = "";
 
         // 数据源自动绑定重试计时
         bool _dataSourceBound;
@@ -117,6 +122,7 @@ namespace Dicom.UI
                 _controller.OnReportChanged -= OnReportChanged;
                 _controller.OnHuAnalyzed -= OnHuAnalyzed;
             }
+            if (_modelTransform != null) _modelTransform.OnPoseChanged -= OnModelPoseChanged;
         }
 
         void Update()
@@ -165,6 +171,8 @@ namespace Dicom.UI
                 _modelTransform = _controller.GetComponent<DicomModelTransform>();
                 if (_modelTransform == null) _modelTransform = GetComponentInChildren<DicomModelTransform>();
             }
+            // 订阅位姿变化,射线/双手缩放拖动时实时刷新尺寸数值
+            if (_modelTransform != null) _modelTransform.OnPoseChanged += OnModelPoseChanged;
 
             BindControllerEvents();
             // 数据源到位后重新配置依赖 controller 的滑块范围与初值
@@ -216,6 +224,8 @@ namespace Dicom.UI
                 _clipToggle.isOn = true;
                 _clipToggle.onValueChanged.AddListener(OnClipToggle);
             }
+            if (_spawnClipButton != null) _spawnClipButton.onClick.AddListener(OnSpawnClip);
+            if (_clearClipButton != null) _clearClipButton.onClick.AddListener(OnClearClip);
             if (_classColorToggle != null)
             {
                 _classColorToggle.isOn = false;
@@ -316,6 +326,41 @@ namespace Dicom.UI
         void OnClipToggle(bool on)
         {
             if (_clipping != null) _clipping.SetEnabled(on);
+        }
+
+        // 在点云中心生成裁切平面(无点云则落到世界原点),法线水平朝向用户使平面竖直正对视线
+        // 裁切平面不依赖点云,controller 缺失时即时创建,保证不必等点云生成
+        void OnSpawnClip()
+        {
+            EnsureClippingController();
+            Vector3 center = _controller != null ? _controller.transform.position : Vector3.zero;
+            _clipping.SpawnPlaneAt(center, ResolveClipNormal(center));
+            if (_clipToggle != null) _clipToggle.SetIsOnWithoutNotify(true);
+        }
+
+        // 裁切法线取头显到平面中心的水平方向,使平面竖直正对用户;无相机时退回朝上
+        // 相机属外部环境,允许查找
+        Vector3 ResolveClipNormal(Vector3 center)
+        {
+            var cam = Camera.main;
+            if (cam == null) return Vector3.up;
+            Vector3 toCam = cam.transform.position - center;
+            toCam.y = 0f;
+            return toCam.sqrMagnitude < 1e-6f ? Vector3.up : toCam.normalized;
+        }
+
+        void OnClearClip()
+        {
+            if (_clipping != null) _clipping.RemovePlane();
+        }
+
+        // 确保有可用的 ClippingPlaneController:已绑定 > 全场景查找 > 新建独立物体
+        void EnsureClippingController()
+        {
+            if (_clipping != null) return;
+            _clipping = FindFirstObjectByType<ClippingPlaneController>();
+            if (_clipping == null)
+                _clipping = new GameObject("DicomClipPlane").AddComponent<ClippingPlaneController>();
         }
 
         // 分类/LUT/断点三个 Toggle 互斥,组合出四态:都关=灰度,分类开=分类着色,LUT 开=离散伪彩,断点开=断点插值
@@ -514,10 +559,34 @@ namespace Dicom.UI
             RefreshModelScaleLabel();
         }
 
+        // 射线拖动/双手缩放等直接改 transform 时触发,同步滑块当前值并刷新尺寸标签
+        void OnModelPoseChanged()
+        {
+            if (_modelTransform != null && _modelScaleSlider != null)
+                _modelScaleSlider.SetValueWithoutNotify(_modelTransform.CurrentScale);
+            RefreshModelScaleLabel();
+        }
+
         void RefreshModelScaleLabel()
         {
             if (_modelScaleLabel == null || _modelScaleSlider == null) return;
-            _modelScaleLabel.text = $"模型缩放: {_modelScaleSlider.value:F4}";
+
+            // 同时显示缩放系数与当前世界呈现物理尺寸(cm):局部包围盒按 mm 布局,乘缩放换算
+            string text;
+            if (_modelTransform != null)
+            {
+                Vector3 size = _modelTransform.CurrentWorldSize * 100f;
+                text = $"模型缩放: {_modelScaleSlider.value:F4}\n尺寸: {size.x:F1} x {size.y:F1} x {size.z:F1} cm";
+            }
+            else
+            {
+                text = $"模型缩放: {_modelScaleSlider.value:F4}";
+            }
+
+            // 文本未变则不写,避免 TMP 每帧重排版
+            if (text == _lastModelLabel) return;
+            _lastModelLabel = text;
+            _modelScaleLabel.text = text;
         }
 
         // === 标签刷新 ===

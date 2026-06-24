@@ -25,6 +25,7 @@ namespace Dicom.UI.EditorTools
             public Button ReconstructAxisButton, RebuildButton;
             public TextMeshProUGUI ReconstructAxisLabel;
             public Toggle ClipToggle, ClassColorToggle, LutColorToggle, BreakpointColorToggle;
+            public Button SpawnClipButton, ClearClipButton;
             public Button LutPresetButton;
             public TextMeshProUGUI LutPresetLabel;
             public Slider ModelScale;
@@ -80,9 +81,14 @@ namespace Dicom.UI.EditorTools
             r.ReconstructAxisButton = CreateButton("ReconstructAxisButton", axis, "切换重建方向 X/Y/Z");
             r.RebuildButton = CreateButton("RebuildButton", axis, "刷新重建点云");
 
+            // 裁切平面区:默认展开,运行时生成/清除裁切平面 + 启用开关
+            var clip = CreateSection(content, "裁切平面", true);
+            r.SpawnClipButton = CreateButton("SpawnClipButton", clip, "生成裁切平面");
+            r.ClearClipButton = CreateButton("ClearClipButton", clip, "清除裁切平面");
+            r.ClipToggle = CreateToggle("ClipToggle", clip, "启用裁切平面");
+
             // 显色开关区:默认展开,高频切换
             var toggles = CreateSection(content, "显色模式", true);
-            r.ClipToggle = CreateToggle("ClipToggle", toggles, "启用裁切平面");
             r.ClassColorToggle = CreateToggle("ClassColorToggle", toggles, "按标签分类着色");
             r.LutColorToggle = CreateToggle("LutColorToggle", toggles, "离散 LUT 伪彩");
             r.BreakpointColorToggle = CreateToggle("BreakpointColorToggle", toggles, "断点插值显色");
@@ -109,6 +115,8 @@ namespace Dicom.UI.EditorTools
         static void CreateTitleBar(RectTransform panel)
         {
             var bar = CreateImage("TitleBar", panel, HeaderBg);
+            // 标题条作为远程射线拖拽抓取区:走 EventSystem 拖拽事件移动面板并实时朝向用户,与手抓物理解耦
+            bar.gameObject.AddComponent<DicomPanelRayDragMover>();
             var barRt = (RectTransform)bar.transform;
             barRt.anchorMin = new Vector2(0f, 1f);
             barRt.anchorMax = new Vector2(1f, 1f);
@@ -249,6 +257,8 @@ namespace Dicom.UI.EditorTools
             Set(so, "_reconstructAxisLabel", r.ReconstructAxisLabel);
             Set(so, "_rebuildButton", r.RebuildButton);
             Set(so, "_clipToggle", r.ClipToggle);
+            Set(so, "_spawnClipButton", r.SpawnClipButton);
+            Set(so, "_clearClipButton", r.ClearClipButton);
             Set(so, "_classColorToggle", r.ClassColorToggle);
             Set(so, "_lutColorToggle", r.LutColorToggle);
             Set(so, "_breakpointColorToggle", r.BreakpointColorToggle);

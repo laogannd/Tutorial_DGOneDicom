@@ -15,8 +15,8 @@ namespace Dicom.PointCloud
         ComputeBuffer _pointBuffer;
         int _pointCount;
         MaterialPropertyBlock _props;
-        // 局部空间体积尺寸，用于每帧算世界 bounds 做视锥剔除
-        Vector3 _localSize = Vector3.one;
+        // 局部空间可见点 AABB(中心可偏离原点),用于每帧算世界 bounds 做视锥剔除
+        Bounds _localBounds = new Bounds(Vector3.zero, Vector3.one);
 
         static readonly int _PointsId = Shader.PropertyToID("_Points");
         static readonly int _PointCountId = Shader.PropertyToID("_PointCount");
@@ -29,8 +29,8 @@ namespace Dicom.PointCloud
         // 运行时指定渲染材质(使用 Dicom/PointCloud shader)
         public void SetMaterial(Material material) => _material = material;
 
-        // 设置局部空间体积尺寸(Width/Height/Depth * Spacing)，供 bounds 计算
-        public void SetLocalSize(Vector3 size) => _localSize = size;
+        // 设置局部空间可见点 AABB(过滤后中心可偏离原点)，供 bounds 剔除
+        public void SetLocalBounds(Bounds bounds) => _localBounds = bounds;
 
         // 用 Job 产出的点填充 GPU buffer，count 为有效点数
         public void SetPoints(NativeArray<DicomPoint> points, int count)
@@ -71,9 +71,8 @@ namespace Dicom.PointCloud
         // 局部 AABB 经 transform 变换为世界 AABB
         Bounds ComputeWorldBounds()
         {
-            var localBounds = new Bounds(Vector3.zero, _localSize);
-            Vector3 c = transform.TransformPoint(localBounds.center);
-            Vector3 e = localBounds.extents;
+            Vector3 c = transform.TransformPoint(_localBounds.center);
+            Vector3 e = _localBounds.extents;
             Vector3 axisX = transform.TransformVector(new Vector3(e.x, 0f, 0f));
             Vector3 axisY = transform.TransformVector(new Vector3(0f, e.y, 0f));
             Vector3 axisZ = transform.TransformVector(new Vector3(0f, 0f, e.z));

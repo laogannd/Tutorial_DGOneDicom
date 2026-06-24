@@ -17,6 +17,9 @@ namespace Dicom.UI
         [SerializeField, Tooltip("碰撞盒中心(Canvas单位),相对面板中心")]
         Vector3 _colliderCenter = new Vector3(0f, 450f, 0f);
 
+        [SerializeField, Tooltip("拖拽时手柄碰撞盒忽略的层,防止与玩家自身碰撞冲突")]
+        LayerMask _excludeLayers = 0;
+
         [SerializeField] float _mass = 1f;
 
         Rigidbody _rigidbody;
@@ -61,6 +64,8 @@ namespace Dicom.UI
             }
             _collider.size = _colliderSize;
             _collider.center = _colliderCenter;
+            // 忽略指定层(如玩家层),拖拽时手柄碰撞盒不与其产生物理碰撞;不影响 AutoHand 的抓取检测
+            _collider.excludeLayers = _excludeLayers;
 
             // 显式设到 Grabbable 层,AutoHand 的手只在该层做 OverlapSphere 检测
             gameObject.layer = LayerMask.NameToLayer(Hand.grabbableLayerNameDefault);

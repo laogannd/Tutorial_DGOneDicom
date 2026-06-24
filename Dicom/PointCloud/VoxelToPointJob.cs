@@ -74,6 +74,10 @@ namespace Dicom.PointCloud
         // 各切片写入互不重叠的区段，故可安全关闭并行写入限制
         [NativeDisableParallelForRestriction] public NativeArray<DicomPoint> Points;
 
+        // 每切片合格点的局部 AABB,按 z 索引各写各的无冲突;无合格点的切片写哨兵(min=+inf max=-inf)供主线程归约忽略
+        [WriteOnly] public NativeArray<float3> SliceMin;
+        [WriteOnly] public NativeArray<float3> SliceMax;
+
         public void Execute(int z)
         {
             int sliceVoxels = Width * Height;
@@ -82,6 +86,10 @@ namespace Dicom.PointCloud
             float3 half = new float3(Width, Height, Depth) * 0.5f;
             float denom = math.max(NormalizeMax - NormalizeMin, 1e-5f);
             int classCount = ClassHuMin.Length;
+
+            // 哨兵初值,本切片有点时被收窄,无点则原样写出供归约忽略
+            float3 lo = new float3(float.MaxValue);
+            float3 hi = new float3(float.MinValue);
 
             for (int i = 0; i < sliceVoxels; i++)
             {
@@ -100,7 +108,14 @@ namespace Dicom.PointCloud
                 float classId = ResolveClass(real, classCount);
 
                 Points[write++] = new DicomPoint { Position = pos, Intensity = intensity, ClassId = classId };
+
+                // 累积本切片可见点的真实 AABB,坐标已经过 RemapAxis,故与重建方向一致
+                lo = math.min(lo, pos);
+                hi = math.max(hi, pos);
             }
+
+            SliceMin[z] = lo;
+            SliceMax[z] = hi;
         }
 
         // 顺序查区间，命中即返回索引，未命中返回 -1

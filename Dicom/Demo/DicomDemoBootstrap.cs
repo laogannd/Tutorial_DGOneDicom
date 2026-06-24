@@ -15,6 +15,8 @@ namespace Dicom.Demo
         [SerializeField] DicomClassificationProfile _classificationProfile;
         [SerializeField] DicomLutProfile _lutProfile;
         [SerializeField] DicomBreakpointProfile _breakpointProfile;
+        // 点云碰撞体预设忽略的层,统一传给运行时挂载的 DicomGrabbableSetup
+        [SerializeField] LayerMask _excludeLayers;
         [SerializeField] bool _autoLoadOnStart = true;
         [SerializeField] bool _attachDebugPanel = true;
 
@@ -46,10 +48,16 @@ namespace Dicom.Demo
             if (_breakpointProfile != null) _controller.SetBreakpointProfile(_breakpointProfile);
             // 先挂 DicomGrabbableSetup，其 Awake 会建好刚体/碰撞体/Grabbable，
             // 再挂 TwoHandScaler，避免它的 RequireComponent 抢先创建未就绪的 Grabbable
-            go.AddComponent<DicomGrabbableSetup>();
+            var grabbableSetup = go.AddComponent<DicomGrabbableSetup>();
+            // Awake 已建好碰撞体,此处赋值立即把预设排除层应用上去
+            grabbableSetup.ExcludeLayers = _excludeLayers;
+            // 在 GrabbableSetup 之后挂,确保碰撞盒 BoxCollider 已就绪供线框读取尺寸
+            go.AddComponent<DicomBoundingBoxVisualizer>();
             // DicomModelTransform 在缩放器之前挂,TwoHandScaler.Awake 才能取到它做相对缩放基准
             go.AddComponent<DicomModelTransform>();
             go.AddComponent<TwoHandScaler>();
+            // 远程射线操控:自治组件,Awake 自动发现场景内的 DicomRayPointer,无需手动装配
+            go.AddComponent<DicomRayManipulator>();
             var windowLevel = go.AddComponent<WindowLevelController>();
             var clipping = go.AddComponent<ClippingPlaneController>();
 

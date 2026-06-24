@@ -51,6 +51,8 @@ namespace Dicom.Interaction
             float baseScale = _modelTransform != null ? _modelTransform.FitScale : _startScale.x;
             float clamped = Mathf.Clamp(target.x, baseScale * _minFactor, baseScale * _maxFactor);
             transform.localScale = Vector3.one * clamped;
+            // 缩放后通知 UI 实时刷新尺寸数值
+            if (_modelTransform != null) _modelTransform.RaisePoseChanged();
         }
 
         // 取前两只手的掌心间距
