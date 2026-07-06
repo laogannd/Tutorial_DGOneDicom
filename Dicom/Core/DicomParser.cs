@@ -56,17 +56,15 @@ namespace Dicom.Core
                 BitsAllocated = 16
             };
 
-            ReadElements(data, ref slice);
-            ValidateAndConvert(ref slice);
+            byte[] pixelBytes = ReadElements(data, ref slice);
+            ValidateAndConvert(ref slice, pixelBytes);
             return slice;
         }
 
-        // 像素数据元素读取后暂存的原始字节与偏移
-        static byte[] _pixelBytes;
-
-        static void ReadElements(byte[] data, ref DicomSlice slice)
+        // 解析主数据集所有元素并回填 slice，返回像素数据原始字节(未找到返回 null)
+        // 无 static 状态，可重入/多线程安全；对损坏或恶意文件的越界长度做边界校验后中止解析
+        static byte[] ReadElements(byte[] data, ref DicomSlice slice)
         {
-            _pixelBytes = null;
             int pos = 132;
 
             // File Meta(0002 组)恒为显式 VR Little Endian
@@ -95,6 +93,8 @@ namespace Dicom.Core
                     // OB/OW/OF/SQ/UT/UN 使用 2 字节保留 + 4 字节长度
                     if (vr == "OB" || vr == "OW" || vr == "OF" || vr == "SQ" || vr == "UT" || vr == "UN")
                     {
+                        // 读 4 字节长度前先确认保留位+长度位在界内，防越界读
+                        if (pos + 6 > data.Length) break;
                         pos += 2;
                         length = ReadInt32(data, pos);
                         pos += 4;
@@ -109,19 +109,24 @@ namespace Dicom.Core
                 // 像素数据 (7FE0,0010)
                 if (group == 0x7FE0 && element == 0x0010)
                 {
-                    if (length < 0 || length == -1 || (uint)length == 0xFFFFFFFF)
+                    if (length < 0 || (uint)length == 0xFFFFFFFF)
                         throw new InvalidDataFormatException("像素数据为压缩/封装格式，当前解析器仅支持非压缩 16bit");
-                    _pixelBytes = new byte[length];
-                    Array.Copy(data, pos, _pixelBytes, 0, length);
-                    return;
+                    // 声明长度超过剩余字节即为损坏文件，拒绝分配防越界拷贝
+                    if (pos + length > data.Length)
+                        throw new InvalidDataFormatException("像素数据长度越界，文件损坏或被截断");
+                    var pixelBytes = new byte[length];
+                    Array.Copy(data, pos, pixelBytes, 0, length);
+                    return pixelBytes;
                 }
 
+                // 长度越界或为负：文件损坏，停止解析(已读到的 Tag 交由 ValidateAndConvert 校验)
                 if (length < 0 || pos + length > data.Length)
                     break;
 
                 AssignTag(group, element, data, pos, length, ref slice);
                 pos += length;
             }
+            return null;
         }
 
         // 读取 File Meta(0002,xxxx)，返回传输语法 UID，pos 移动到主数据集起点
@@ -142,6 +147,7 @@ namespace Dicom.Core
                 int length;
                 if (vr == "OB" || vr == "OW" || vr == "OF" || vr == "SQ" || vr == "UT" || vr == "UN")
                 {
+                    if (pos + 6 > data.Length) break;
                     pos += 2;
                     length = ReadInt32(data, pos);
                     pos += 4;
@@ -151,6 +157,10 @@ namespace Dicom.Core
                     length = data[pos] | (data[pos + 1] << 8);
                     pos += 2;
                 }
+
+                // 长度越界即中止 File Meta 解析，防越界读
+                if (length < 0 || pos + length > data.Length)
+                    break;
 
                 // (0002,0010) Transfer Syntax UID
                 if (element == 0x0010)
@@ -208,26 +218,25 @@ namespace Dicom.Core
             }
         }
 
-        static void ValidateAndConvert(ref DicomSlice slice)
+        static void ValidateAndConvert(ref DicomSlice slice, byte[] pixelBytes)
         {
             if (slice.Rows <= 0 || slice.Columns <= 0)
                 throw new InvalidDataFormatException("缺少有效的 Rows/Columns");
-            if (_pixelBytes == null)
+            if (pixelBytes == null)
                 throw new InvalidDataFormatException("未找到像素数据 (7FE0,0010)");
             if (slice.BitsAllocated != 16)
                 throw new InvalidDataFormatException($"仅支持 16bit 像素，实际 BitsAllocated={slice.BitsAllocated}");
 
             int count = slice.Rows * slice.Columns;
-            if (_pixelBytes.Length < count * 2)
+            if (pixelBytes.Length < count * 2)
                 throw new InvalidDataFormatException("像素数据长度小于 Rows*Columns*2");
 
             var pixels = new short[count];
             // 小端 16bit，无论有无符号都按 short 存(HU 范围足够)
             for (int i = 0; i < count; i++)
-                pixels[i] = (short)(_pixelBytes[i * 2] | (_pixelBytes[i * 2 + 1] << 8));
+                pixels[i] = (short)(pixelBytes[i * 2] | (pixelBytes[i * 2 + 1] << 8));
 
             slice.Pixels = pixels;
-            _pixelBytes = null;
         }
 
         static ushort ReadUShort(byte[] d, int p) => (ushort)(d[p] | (d[p + 1] << 8));

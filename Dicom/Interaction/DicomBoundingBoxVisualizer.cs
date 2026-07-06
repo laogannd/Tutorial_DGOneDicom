@@ -224,7 +224,12 @@ namespace Dicom.Interaction
 
             var sprite = Shader.Find("Sprites/Default");
             if (sprite != null) return new Material(sprite) { color = color };
-            return new Material(Shader.Find("Unlit/Color")) { color = color };
+            // 内置 shader 被剥离(URP 构建常见):判空避免 new Material(null) 在真机崩溃
+            var unlit = Shader.Find("Unlit/Color");
+            if (unlit != null) return new Material(unlit) { color = color };
+
+            Debug.LogWarning("包围盒线框所需 shader 均被剥离，改用无材质(建议加入 Always Included Shaders)");
+            return null;
         }
     }
 }

@@ -55,12 +55,12 @@ namespace Dicom.Interaction
             if (_modelTransform != null) _modelTransform.RaisePoseChanged();
         }
 
-        // 取前两只手的掌心间距
+        // 取前两只手的掌心间距;palmTransform 未初始化时退回手物体本身(与 BoundingBoxVisualizer 一致)
         static float HandDistance(List<Hand> hands)
         {
-            Transform a = hands[0].palmTransform;
-            Transform b = hands[1].palmTransform;
-            return Vector3.Distance(a.position, b.position);
+            Vector3 a = hands[0].palmTransform != null ? hands[0].palmTransform.position : hands[0].transform.position;
+            Vector3 b = hands[1].palmTransform != null ? hands[1].palmTransform.position : hands[1].transform.position;
+            return Vector3.Distance(a, b);
         }
     }
 }

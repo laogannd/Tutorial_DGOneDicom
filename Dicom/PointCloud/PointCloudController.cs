@@ -64,6 +64,8 @@ namespace Dicom.PointCloud
 
         DicomPointCloud _pointCloud;
         DicomDataset _dataset;
+        // 整卷体素的常驻 NativeArray，与 _dataset 绑定复用：调阈值/方向/归一化重建时不再逐次重拷上百 MB
+        NativeArray<short> _voxels;
         HuRangeReport _huReport;
         CancellationTokenSource _cts;
         // 最近一次重建得到的可见点局部 AABB,供加载后晚订阅者补取当前值
@@ -140,6 +142,8 @@ namespace Dicom.PointCloud
                 _loadTimer.Stop();
                 _report.LoadSeconds = (float)_loadTimer.Elapsed.TotalSeconds;
                 _dataset = dataset;
+                // 整卷体素一次性拷入常驻 NativeArray，后续所有重建复用同一份，避免重复分配
+                SetVoxelCache(dataset);
                 _report.Width = dataset.Width;
                 _report.Height = dataset.Height;
                 _report.Depth = dataset.Depth;
@@ -200,122 +204,139 @@ namespace Dicom.PointCloud
             int sliceVoxels = dataset.Width * dataset.Height;
             int depth = dataset.Depth;
 
-            var voxels = new NativeArray<short>(dataset.Voxels, Allocator.TempJob);
+            // 复用常驻体素缓存:若与当前 dataset 不匹配(异常路径)则即时补建
+            if (!_voxels.IsCreated || _voxels.Length != dataset.Voxels.Length)
+                SetVoxelCache(dataset);
+
+            // 每次重建重新分配的 job 数组，用 try/finally 保证任一步异常都不泄漏
             var sliceCounts = new NativeArray<int>(depth, Allocator.TempJob);
-
-            // 第一遍：每切片统计阈值内体素数
-            var countJob = new CountVoxelsJob
-            {
-                Voxels = voxels,
-                SliceVoxels = sliceVoxels,
-                Slope = dataset.RescaleSlope,
-                Intercept = dataset.RescaleIntercept,
-                ThresholdMin = _thresholdMin,
-                ThresholdMax = _thresholdMax,
-                SliceCounts = sliceCounts
-            };
-            countJob.Schedule(depth, 1).Complete();
-
-            // 主线程前缀和算各切片写入偏移与总点数
             var offsets = new NativeArray<int>(depth, Allocator.TempJob);
-            int total = 0;
-            for (int z = 0; z < depth; z++)
-            {
-                offsets[z] = total;
-                total += sliceCounts[z];
-            }
+            NativeArray<DicomPoint> points = default;
+            NativeArray<float3> sliceMin = default;
+            NativeArray<float3> sliceMax = default;
+            NativeArray<float> classMin = default;
+            NativeArray<float> classMax = default;
 
-            if (total <= 0)
+            try
             {
-                _pointCloud.SetPoints(default, 0);
-                // 无可见点:尺寸归零,通知订阅者收起碰撞盒与线框
-                _localBounds = new Bounds(Vector3.zero, Vector3.zero);
+                // 第一遍：每切片统计阈值内体素数
+                var countJob = new CountVoxelsJob
+                {
+                    Voxels = _voxels,
+                    SliceVoxels = sliceVoxels,
+                    Slope = dataset.RescaleSlope,
+                    Intercept = dataset.RescaleIntercept,
+                    ThresholdMin = _thresholdMin,
+                    ThresholdMax = _thresholdMax,
+                    SliceCounts = sliceCounts
+                };
+                countJob.Schedule(depth, 1).Complete();
+
+                // 主线程前缀和算各切片写入偏移与总点数
+                int total = 0;
+                for (int z = 0; z < depth; z++)
+                {
+                    offsets[z] = total;
+                    total += sliceCounts[z];
+                }
+
+                if (total <= 0)
+                {
+                    _pointCloud.SetPoints(default, 0);
+                    // 无可见点:尺寸归零,通知订阅者收起碰撞盒与线框
+                    _localBounds = new Bounds(Vector3.zero, Vector3.zero);
+                    _pointCloud.SetLocalBounds(_localBounds);
+                    buildTimer.Stop();
+                    _report.PointCount = 0;
+                    _report.BuildSeconds = (float)buildTimer.Elapsed.TotalSeconds;
+                    RaiseReport();
+                    OnBoundsChanged?.Invoke(_localBounds);
+                    Debug.LogWarning("DICOM 阈值过滤后无可见点");
+                    return;
+                }
+
+                // 第二遍：各切片写入互不重叠区段
+                points = new NativeArray<DicomPoint>(total, Allocator.TempJob);
+                // 各切片可见点 AABB,主线程归约为整体局部包围盒
+                sliceMin = new NativeArray<float3>(depth, Allocator.TempJob);
+                sliceMax = new NativeArray<float3>(depth, Allocator.TempJob);
+
+                // 分类区间表传给 Job(无 profile 则建空表，Job 内全部 ClassId = -1)
+                BuildClassRanges(out classMin, out classMax);
+
+                var writeJob = new WritePointsJob
+                {
+                    Voxels = _voxels,
+                    SliceOffsets = offsets,
+                    Width = dataset.Width,
+                    Height = dataset.Height,
+                    Depth = dataset.Depth,
+                    Spacing = dataset.Spacing,
+                    Slope = dataset.RescaleSlope,
+                    Intercept = dataset.RescaleIntercept,
+                    ThresholdMin = _thresholdMin,
+                    ThresholdMax = _thresholdMax,
+                    NormalizeMin = _normalizeMin,
+                    NormalizeMax = _normalizeMax,
+                    ReconstructAxis = (int)_reconstructAxis,
+                    ClassHuMin = classMin,
+                    ClassHuMax = classMax,
+                    Points = points,
+                    SliceMin = sliceMin,
+                    SliceMax = sliceMax
+                };
+                writeJob.Schedule(depth, 1).Complete();
+
+                _pointCloud.SetPoints(points, total);
+
+                // 归约各切片 AABB 为整体局部包围盒;切片无点时为哨兵(min>max),跳过不污染结果
+                float3 lo = new float3(float.MaxValue);
+                float3 hi = new float3(float.MinValue);
+                for (int z = 0; z < depth; z++)
+                {
+                    if (sliceMin[z].x > sliceMax[z].x) continue;
+                    lo = math.min(lo, sliceMin[z]);
+                    hi = math.max(hi, sliceMax[z]);
+                }
+
+                // 过滤后点云常偏体积一侧,包围盒中心随之偏离原点,而非固定居中
+                Vector3 center = (Vector3)((lo + hi) * 0.5f);
+                Vector3 size = (Vector3)(hi - lo);
+                // 单点/共面时某轴尺寸为 0,给一个体素间距级最小厚度,避免碰撞盒退化与线框零厚
+                float minThickness = math.cmin(dataset.Spacing);
+                size.x = Mathf.Max(size.x, minThickness);
+                size.y = Mathf.Max(size.y, minThickness);
+                size.z = Mathf.Max(size.z, minThickness);
+                _localBounds = new Bounds(center, size);
                 _pointCloud.SetLocalBounds(_localBounds);
-                voxels.Dispose();
-                sliceCounts.Dispose();
-                offsets.Dispose();
+
                 buildTimer.Stop();
-                _report.PointCount = 0;
+                _report.PointCount = total;
                 _report.BuildSeconds = (float)buildTimer.Elapsed.TotalSeconds;
                 RaiseReport();
+                // 碰撞盒与线框据此紧贴当前可见点云;每次重建(调阈值/方向/归一化)都刷新
                 OnBoundsChanged?.Invoke(_localBounds);
-                Debug.LogWarning("DICOM 阈值过滤后无可见点");
-                return;
+
+                Debug.Log($"DICOM 点云生成完毕: {total} 点 (体积 {dataset.Width}x{dataset.Height}x{dataset.Depth}, 用时 {_report.BuildSeconds:F2}s)");
             }
-
-            // 第二遍：各切片写入互不重叠区段
-            var points = new NativeArray<DicomPoint>(total, Allocator.TempJob);
-            // 各切片可见点 AABB,主线程归约为整体局部包围盒
-            var sliceMin = new NativeArray<float3>(depth, Allocator.TempJob);
-            var sliceMax = new NativeArray<float3>(depth, Allocator.TempJob);
-
-            // 分类区间表传给 Job(无 profile 则建空表，Job 内全部 ClassId = -1)
-            BuildClassRanges(out var classMin, out var classMax);
-
-            var writeJob = new WritePointsJob
+            finally
             {
-                Voxels = voxels,
-                SliceOffsets = offsets,
-                Width = dataset.Width,
-                Height = dataset.Height,
-                Depth = dataset.Depth,
-                Spacing = dataset.Spacing,
-                Slope = dataset.RescaleSlope,
-                Intercept = dataset.RescaleIntercept,
-                ThresholdMin = _thresholdMin,
-                ThresholdMax = _thresholdMax,
-                NormalizeMin = _normalizeMin,
-                NormalizeMax = _normalizeMax,
-                ReconstructAxis = (int)_reconstructAxis,
-                ClassHuMin = classMin,
-                ClassHuMax = classMax,
-                Points = points,
-                SliceMin = sliceMin,
-                SliceMax = sliceMax
-            };
-            writeJob.Schedule(depth, 1).Complete();
-
-            _pointCloud.SetPoints(points, total);
-
-            // 归约各切片 AABB 为整体局部包围盒;切片无点时为哨兵(min>max),跳过不污染结果
-            float3 lo = new float3(float.MaxValue);
-            float3 hi = new float3(float.MinValue);
-            for (int z = 0; z < depth; z++)
-            {
-                if (sliceMin[z].x > sliceMax[z].x) continue;
-                lo = math.min(lo, sliceMin[z]);
-                hi = math.max(hi, sliceMax[z]);
+                // 每次重建分配的临时数组全部释放，异常路径也不泄漏(常驻 _voxels 不在此释放)
+                if (sliceCounts.IsCreated) sliceCounts.Dispose();
+                if (offsets.IsCreated) offsets.Dispose();
+                if (points.IsCreated) points.Dispose();
+                if (sliceMin.IsCreated) sliceMin.Dispose();
+                if (sliceMax.IsCreated) sliceMax.Dispose();
+                if (classMin.IsCreated) classMin.Dispose();
+                if (classMax.IsCreated) classMax.Dispose();
             }
+        }
 
-            // 过滤后点云常偏体积一侧,包围盒中心随之偏离原点,而非固定居中
-            Vector3 center = (Vector3)((lo + hi) * 0.5f);
-            Vector3 size = (Vector3)(hi - lo);
-            // 单点/共面时某轴尺寸为 0,给一个体素间距级最小厚度,避免碰撞盒退化与线框零厚
-            float minThickness = math.cmin(dataset.Spacing);
-            size.x = Mathf.Max(size.x, minThickness);
-            size.y = Mathf.Max(size.y, minThickness);
-            size.z = Mathf.Max(size.z, minThickness);
-            _localBounds = new Bounds(center, size);
-            _pointCloud.SetLocalBounds(_localBounds);
-
-            // 资源释放，避免 NativeArray 泄漏(CLAUDE.md 约束)
-            points.Dispose();
-            sliceMin.Dispose();
-            sliceMax.Dispose();
-            classMin.Dispose();
-            classMax.Dispose();
-            offsets.Dispose();
-            sliceCounts.Dispose();
-            voxels.Dispose();
-
-            buildTimer.Stop();
-            _report.PointCount = total;
-            _report.BuildSeconds = (float)buildTimer.Elapsed.TotalSeconds;
-            RaiseReport();
-            // 碰撞盒与线框据此紧贴当前可见点云;每次重建(调阈值/方向/归一化)都刷新
-            OnBoundsChanged?.Invoke(_localBounds);
-
-            Debug.Log($"DICOM 点云生成完毕: {total} 点 (体积 {dataset.Width}x{dataset.Height}x{dataset.Depth}, 用时 {_report.BuildSeconds:F2}s)");
+        // 把 dataset 整卷体素拷入常驻 NativeArray，替换旧缓存。加载新序列或缓存失配时调用
+        void SetVoxelCache(DicomDataset dataset)
+        {
+            if (_voxels.IsCreated) _voxels.Dispose();
+            _voxels = new NativeArray<short>(dataset.Voxels, Allocator.Persistent);
         }
 
         // 运行时调阈值后重算点云
@@ -468,6 +489,8 @@ namespace Dicom.PointCloud
         void OnDestroy()
         {
             CancelOngoing();
+            // 释放常驻体素缓存，避免 NativeArray 泄漏(CLAUDE.md 资源生命周期约束)
+            if (_voxels.IsCreated) _voxels.Dispose();
             // 释放烘焙的 LUT 纹理，避免纹理泄漏(CLAUDE.md 资源生命周期约束)
             if (_lutProfile != null) _lutProfile.DestroyBaked();
             if (_breakpointProfile != null) _breakpointProfile.DestroyBaked();

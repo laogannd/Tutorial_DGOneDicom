@@ -89,8 +89,12 @@ namespace Dicom.UI
 
         float _tintR = 1f, _tintG = 1f, _tintB = 1f, _gain = 1f;
 
-        // 尺寸标签缓存:位姿每帧可能触发,仅在文本变化时才重拼字符串避免 GC
-        string _lastModelLabel = "";
+        // 尺寸标签缓存:位姿每帧可能触发,先按显示精度比对数值,变化时才重拼字符串避免每帧 GC
+        // 量化到标签精度(缩放 F4=1e4,尺寸 cm F1=10),显示位未变则整帧跳过
+        int _lastScaleQuantized = int.MinValue;
+        int _lastSizeXQuantized = int.MinValue;
+        int _lastSizeYQuantized = int.MinValue;
+        int _lastSizeZQuantized = int.MinValue;
 
         // 数据源自动绑定重试计时
         bool _dataSourceBound;
@@ -571,22 +575,29 @@ namespace Dicom.UI
         {
             if (_modelScaleLabel == null || _modelScaleSlider == null) return;
 
-            // 同时显示缩放系数与当前世界呈现物理尺寸(cm):局部包围盒按 mm 布局,乘缩放换算
-            string text;
+            // 先按显示精度量化比对数值,任一显示位未变则整帧跳过,不构造字符串(消除拖动/缩放期每帧 GC)
+            int scaleQ = Mathf.RoundToInt(_modelScaleSlider.value * 10000f);
             if (_modelTransform != null)
             {
                 Vector3 size = _modelTransform.CurrentWorldSize * 100f;
-                text = $"模型缩放: {_modelScaleSlider.value:F4}\n尺寸: {size.x:F1} x {size.y:F1} x {size.z:F1} cm";
+                int sxQ = Mathf.RoundToInt(size.x * 10f);
+                int syQ = Mathf.RoundToInt(size.y * 10f);
+                int szQ = Mathf.RoundToInt(size.z * 10f);
+                if (scaleQ == _lastScaleQuantized && sxQ == _lastSizeXQuantized &&
+                    syQ == _lastSizeYQuantized && szQ == _lastSizeZQuantized) return;
+                _lastScaleQuantized = scaleQ;
+                _lastSizeXQuantized = sxQ;
+                _lastSizeYQuantized = syQ;
+                _lastSizeZQuantized = szQ;
+                // 同时显示缩放系数与当前世界呈现物理尺寸(cm):局部包围盒按 mm 布局,乘缩放换算
+                _modelScaleLabel.text = $"模型缩放: {_modelScaleSlider.value:F4}\n尺寸: {size.x:F1} x {size.y:F1} x {size.z:F1} cm";
             }
             else
             {
-                text = $"模型缩放: {_modelScaleSlider.value:F4}";
+                if (scaleQ == _lastScaleQuantized) return;
+                _lastScaleQuantized = scaleQ;
+                _modelScaleLabel.text = $"模型缩放: {_modelScaleSlider.value:F4}";
             }
-
-            // 文本未变则不写,避免 TMP 每帧重排版
-            if (text == _lastModelLabel) return;
-            _lastModelLabel = text;
-            _modelScaleLabel.text = text;
         }
 
         // === 标签刷新 ===

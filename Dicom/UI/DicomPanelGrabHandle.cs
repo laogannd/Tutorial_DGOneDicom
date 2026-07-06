@@ -68,7 +68,10 @@ namespace Dicom.UI
             _collider.excludeLayers = _excludeLayers;
 
             // 显式设到 Grabbable 层,AutoHand 的手只在该层做 OverlapSphere 检测
-            gameObject.layer = LayerMask.NameToLayer(Hand.grabbableLayerNameDefault);
+            // 层缺失时 NameToLayer 返回 -1，赋给 layer 会抛异常，守卫后报错跳过
+            int grabLayer = LayerMask.NameToLayer(Hand.grabbableLayerNameDefault);
+            if (grabLayer >= 0) gameObject.layer = grabLayer;
+            else Debug.LogError($"未定义抓取层 '{Hand.grabbableLayerNameDefault}'，面板无法被抓取");
 
             if (_grabbable == null)
             {

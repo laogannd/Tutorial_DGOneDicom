@@ -25,7 +25,10 @@ namespace Dicom.Interaction
             var handle = new GameObject("ClipPlaneHandle");
             handle.transform.SetParent(parent, false);
             handle.transform.localPosition = Vector3.zero;
-            handle.layer = LayerMask.NameToLayer(Hand.grabbableLayerNameDefault);
+            // 抓取层缺失时 NameToLayer 返回 -1，赋给 layer 会抛异常，守卫后跳过
+            int grabLayer = LayerMask.NameToLayer(Hand.grabbableLayerNameDefault);
+            if (grabLayer >= 0) handle.layer = grabLayer;
+            else Debug.LogError($"未定义抓取层 '{Hand.grabbableLayerNameDefault}'，裁切平面手柄无法被抓取");
 
             var body = handle.AddComponent<Rigidbody>();
             body.useGravity = false;
@@ -44,44 +47,51 @@ namespace Dicom.Interaction
             // 抓取时解锁 Kinematic,脱手后复位
             handle.AddComponent<GrabKinematicLock>();
 
-            BuildVisual(handle.transform, extent);
+            // 材质持有者:手柄销毁时统一 Destroy 运行时创建的材质，避免 sharedMaterial 泄漏
+            var owner = handle.AddComponent<ClipPlaneMaterialOwner>();
+
+            BuildVisual(handle.transform, extent, owner);
             return handle;
         }
 
         // 中心透明面板 + 四根高亮条拼成的镂空框,中心透视点云,只有边框可见
-        static void BuildVisual(Transform handle, float extent)
+        static void BuildVisual(Transform handle, float extent, ClipPlaneMaterialOwner owner)
         {
-            // 中心面板:大面积透明,仅淡淡示意平面朝向
-            CreateSlab("Panel", handle, new Vector3(extent, PanelThickness, extent), Vector3.zero, PanelColor, true);
+            // 中心面板:大面积透明,仅淡淡示意平面朝向(单独一份透明材质)
+            var panelMat = owner.Register(CreateMaterial(PanelColor, true));
+            CreateSlab("Panel", handle, new Vector3(extent, PanelThickness, extent), Vector3.zero, panelMat);
 
             // 四边高亮条:上下沿 X 铺满,左右沿 Z 铺满,角点重叠不影响观感
+            // 四条共用同一份 Frame 材质，省 3 份材质分配
+            var frameMat = owner.Register(CreateMaterial(FrameColor, false));
             float bar = extent * BarWidthRatio;
             float half = extent * 0.5f - bar * 0.5f;
-            CreateSlab("Frame_Top", handle, new Vector3(extent, FrameThickness, bar), new Vector3(0f, 0f, half), FrameColor, false);
-            CreateSlab("Frame_Bottom", handle, new Vector3(extent, FrameThickness, bar), new Vector3(0f, 0f, -half), FrameColor, false);
-            CreateSlab("Frame_Left", handle, new Vector3(bar, FrameThickness, extent), new Vector3(-half, 0f, 0f), FrameColor, false);
-            CreateSlab("Frame_Right", handle, new Vector3(bar, FrameThickness, extent), new Vector3(half, 0f, 0f), FrameColor, false);
+            CreateSlab("Frame_Top", handle, new Vector3(extent, FrameThickness, bar), new Vector3(0f, 0f, half), frameMat);
+            CreateSlab("Frame_Bottom", handle, new Vector3(extent, FrameThickness, bar), new Vector3(0f, 0f, -half), frameMat);
+            CreateSlab("Frame_Left", handle, new Vector3(bar, FrameThickness, extent), new Vector3(-half, 0f, 0f), frameMat);
+            CreateSlab("Frame_Right", handle, new Vector3(bar, FrameThickness, extent), new Vector3(half, 0f, 0f), frameMat);
         }
 
-        // 用扁平 Cube 做一层薄板,移除碰撞体避免干扰抓取检测;transparent 控制材质混合模式
-        static GameObject CreateSlab(string name, Transform parent, Vector3 size, Vector3 localPos, Color color, bool transparent)
+        // 用扁平 Cube 做一层薄板,移除碰撞体避免干扰抓取检测
+        static GameObject CreateSlab(string name, Transform parent, Vector3 size, Vector3 localPos, Material material)
         {
             var slab = GameObject.CreatePrimitive(PrimitiveType.Cube);
             slab.name = name;
-            // Cube 自带 BoxCollider,薄板不需要碰撞,移除避免干扰手柄抓取检测
+            // Cube 自带 BoxCollider,薄板不需要碰撞,移除避免干扰手柄抓取检测。运行时用 Destroy
             var c = slab.GetComponent<Collider>();
-            if (c != null) Object.DestroyImmediate(c);
+            if (c != null) Object.Destroy(c);
 
             slab.transform.SetParent(parent, false);
             slab.transform.localPosition = localPos;
             slab.transform.localRotation = Quaternion.identity;
             slab.transform.localScale = size;
 
-            slab.GetComponent<MeshRenderer>().sharedMaterial = CreateMaterial(color, transparent);
+            slab.GetComponent<MeshRenderer>().sharedMaterial = material;
             return slab;
         }
 
         // URP 项目用 Universal Unlit,内置管线回退;transparent 时切到透明混合模式
+        // 所需 shader 全部缺失(被剥离)时返回 null，调用方按无材质处理，不构造 new Material(null) 崩溃
         static Material CreateMaterial(Color color, bool transparent)
         {
             var urp = Shader.Find("Universal Render Pipeline/Unlit");
@@ -93,13 +103,17 @@ namespace Dicom.Interaction
                 return mat;
             }
 
-            // 内置管线回退:透明用支持 alpha 的 Unlit/Transparent 系不便设纯色,改用 Sprites/Default(支持顶点色+alpha)
+            // 内置管线回退:透明用支持 alpha 的 Sprites/Default(支持顶点色+alpha)
             if (transparent)
             {
                 var sprite = Shader.Find("Sprites/Default");
                 if (sprite != null) return new Material(sprite) { color = color };
             }
-            return new Material(Shader.Find("Unlit/Color")) { color = color };
+            var unlit = Shader.Find("Unlit/Color");
+            if (unlit != null) return new Material(unlit) { color = color };
+
+            Debug.LogWarning("裁切平面手柄所需 shader 均被剥离，改用无材质(建议加入 Always Included Shaders)");
+            return null;
         }
 
         // 切换 URP Unlit 到透明表面模式:SrcAlpha/OneMinusSrcAlpha 混合,关 ZWrite,排到透明队列
