@@ -1,0 +1,91 @@
+using System.IO;
+using UnityEngine;
+
+using Dicom.Core;
+using Dicom.Demo;
+using Dicom.PointCloud;
+
+namespace Dicom.Gene
+{
+    // 基因系统示例引导:创建点云与交互组件,数据从 persistentDataPath/<子目录> 加载
+    // 组件创建(Setup)与数据加载(LoadDefault)分离,支持统一面板切到基因标签才延迟加载
+    // 仿 DicomDemoBootstrap,便于 Play Mode 验证与 Pico 上 adb push 测试数据
+    public class GeneDemoBootstrap : MonoBehaviour
+    {
+        [SerializeField] string _relativeDir = "gene";
+        [SerializeField] Material _pointMaterial;
+        [SerializeField] DicomLutProfile _lutProfile;
+        // tag->区域名映射,传给调试面板(可空,回退 "区域{tag}")
+        [SerializeField] GeneTagNameTable _tagNameTable;
+        [SerializeField] LayerMask _excludeLayers;
+        // 组件创建完是否立即加载数据;统一面板模式下设 false,由面板切标签触发
+        [SerializeField] bool _autoLoadOnStart = false;
+        // 加载完成后自动选中的默认基因(空则不自动选,由面板选)
+        [SerializeField] string _defaultGene = "";
+        [SerializeField] bool _attachDebugPanel = true;
+
+        GeneColorController _controller;
+        bool _componentsReady;
+
+        public GeneColorController Controller => _controller;
+
+        void Start()
+        {
+            Setup();
+            if (_autoLoadOnStart) LoadDefault();
+        }
+
+        // 创建点云与交互组件并绑定统一面板;只建一次,不加载数据
+        public void Setup()
+        {
+            if (_componentsReady) return;
+            _componentsReady = true;
+
+            var go = new GameObject("GenePointCloud");
+            go.transform.SetParent(transform, false);
+
+            var pc = go.AddComponent<DicomPointCloud>();
+            SetMaterial(pc);
+
+            _controller = go.AddComponent<GeneColorController>();
+            if (_lutProfile != null) _controller.SetLutProfile(_lutProfile);
+
+            // 先挂 GrabbableSetup(Awake 建刚体/碰撞体/Grabbable),再挂 ModelTransform
+            var grabbableSetup = go.AddComponent<GeneGrabbableSetup>();
+            grabbableSetup.ExcludeLayers = _excludeLayers;
+            var modelTransform = go.AddComponent<GeneModelTransform>();
+            // 画笔选择器 + 可视化(mode2);默认不启用,由面板开关
+            var brush = go.AddComponent<GeneBrushSelector>();
+            go.AddComponent<GeneBrushVisual>();
+
+            if (!string.IsNullOrEmpty(_defaultGene))
+                _controller.OnLoaded += _ => _controller.SelectGene(_defaultGene);
+
+            _controller.OnError += e => Debug.LogError($"基因数据加载错误: {e.Message}");
+
+            // 接入统一面板:优先绑定场景已有面板,否则新建一个
+            if (_attachDebugPanel)
+            {
+                var panel = FindObjectOfType<UnifiedDebugPanel>();
+                if (panel == null) panel = gameObject.AddComponent<UnifiedDebugPanel>();
+                panel.BindGene(this, _controller, modelTransform, brush, _tagNameTable);
+            }
+        }
+
+        // 从 persistentDataPath/<_relativeDir> 加载数据;组件未建则先建
+        public void LoadDefault()
+        {
+            Setup();
+            string dir = Path.Combine(Application.persistentDataPath, _relativeDir);
+            _controller.Load(dir);
+        }
+
+        void SetMaterial(DicomPointCloud pc)
+        {
+            if (_pointMaterial == null) return;
+            var field = typeof(DicomPointCloud).GetField("_material",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            if (field != null) field.SetValue(pc, _pointMaterial);
+        }
+    }
+}

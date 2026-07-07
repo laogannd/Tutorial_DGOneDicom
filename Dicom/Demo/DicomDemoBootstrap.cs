@@ -64,30 +64,16 @@ namespace Dicom.Demo
             _controller.OnProgress += r => Debug.Log($"DICOM 加载进度: {r * 100f:F0}%");
             _controller.OnError += e => Debug.LogError($"DICOM 加载错误: {e.Message}");
 
-            // 调试面板挂在 bootstrap 物体上，绑定动态创建的各控制器
+            // 接入统一面板:优先绑定场景已有面板,否则新建一个,再把 DICOM 组件绑上去
             if (_attachDebugPanel)
             {
-                var panel = gameObject.AddComponent<DicomDebugPanel>();
-                BindPanel(panel, pc, windowLevel, clipping);
+                var modelTransform = go.GetComponent<DicomModelTransform>();
+                var panel = FindObjectOfType<UnifiedDebugPanel>();
+                if (panel == null) panel = gameObject.AddComponent<UnifiedDebugPanel>();
+                panel.BindDicom(_controller, pc, windowLevel, clipping, modelTransform);
             }
 
             _controller.Load(directory);
-        }
-
-        // 通过反射把动态创建的组件绑定到面板私有字段(Demo 便利)
-        void BindPanel(DicomDebugPanel panel, DicomPointCloud pc, WindowLevelController windowLevel, ClippingPlaneController clipping)
-        {
-            SetPrivateField(panel, "_controller", _controller);
-            SetPrivateField(panel, "_pointCloud", pc);
-            SetPrivateField(panel, "_windowLevel", windowLevel);
-            SetPrivateField(panel, "_clipping", clipping);
-        }
-
-        void SetPrivateField(object target, string name, object value)
-        {
-            var field = target.GetType().GetField(name,
-                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            if (field != null) field.SetValue(target, value);
         }
 
         // 通过反射设置序列化的私有 material 字段(Demo 便利，正式用 Inspector 赋值)
