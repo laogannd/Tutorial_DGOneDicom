@@ -36,11 +36,18 @@ namespace Dicom.Demo
 
         public void Load(string directory)
         {
+            // 重复加载(换目录重载)先销毁上一次的点云对象,避免多套点云叠加渲染与 controller/订阅残留
+            if (_controller != null)
+            {
+                Destroy(_controller.gameObject);
+                _controller = null;
+            }
+
             var go = new GameObject("DicomPointCloud");
             go.transform.SetParent(transform, false);
 
             var pc = go.AddComponent<DicomPointCloud>();
-            SetMaterial(pc);
+            if (_pointMaterial != null) pc.SetMaterial(_pointMaterial);
 
             _controller = go.AddComponent<PointCloudController>();
             if (_classificationProfile != null) _controller.SetClassificationProfile(_classificationProfile);
@@ -68,21 +75,12 @@ namespace Dicom.Demo
             if (_attachDebugPanel)
             {
                 var modelTransform = go.GetComponent<DicomModelTransform>();
-                var panel = FindObjectOfType<UnifiedDebugPanel>();
+                var panel = FindFirstObjectByType<UnifiedDebugPanel>();
                 if (panel == null) panel = gameObject.AddComponent<UnifiedDebugPanel>();
                 panel.BindDicom(_controller, pc, windowLevel, clipping, modelTransform);
             }
 
             _controller.Load(directory);
-        }
-
-        // 通过反射设置序列化的私有 material 字段(Demo 便利，正式用 Inspector 赋值)
-        void SetMaterial(DicomPointCloud pc)
-        {
-            if (_pointMaterial == null) return;
-            var field = typeof(DicomPointCloud).GetField("_material",
-                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            if (field != null) field.SetValue(pc, _pointMaterial);
         }
     }
 }

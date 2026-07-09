@@ -9,7 +9,7 @@ using Dicom.Interaction;
 
 namespace Dicom.UI
 {
-    // 世界空间 UGUI 版 DICOM 操作面板，功能对齐 DicomDebugPanel，供 VR 手交互
+    // 世界空间 UGUI 版 DICOM 操作面板，功能对齐 UnifiedDebugPanel 的 DICOM 标签页，供 VR 手交互
     // 控件引用由 DicomPanelFactory 编辑器工厂绑定；兼容 HandCanvasPointer 射线与 UIPokeBridge 手指触碰
     [AddComponentMenu("Dicom/Dicom Panel UI")]
     public class DicomPanelUI : MonoBehaviour
@@ -95,6 +95,11 @@ namespace Dicom.UI
         int _lastSizeXQuantized = int.MinValue;
         int _lastSizeYQuantized = int.MinValue;
         int _lastSizeZQuantized = int.MinValue;
+
+        // 外观/阈值/归一化标签量化缓存:戳按滑块每帧触发回调,量化到各自显示精度,显示位未变则跳过重拼字符串
+        int _lastPointSizeQ = int.MinValue, _lastWindowCenterQ = int.MinValue, _lastWindowWidthQ = int.MinValue, _lastGainQ = int.MinValue;
+        int _lastThresholdMinQ = int.MinValue, _lastThresholdMaxQ = int.MinValue;
+        int _lastNormalizeMinQ = int.MinValue, _lastNormalizeMaxQ = int.MinValue;
 
         // 数据源自动绑定重试计时
         bool _dataSourceBound;
@@ -603,22 +608,54 @@ namespace Dicom.UI
         // === 标签刷新 ===
         void RefreshAppearanceLabels()
         {
-            if (_pointSizeLabel != null && _pointSizeSlider != null) _pointSizeLabel.text = $"点大小: {_pointSizeSlider.value:F4}";
-            if (_windowCenterLabel != null && _windowCenterSlider != null) _windowCenterLabel.text = $"窗位: {_windowCenterSlider.value:F2}";
-            if (_windowWidthLabel != null && _windowWidthSlider != null) _windowWidthLabel.text = $"窗宽: {_windowWidthSlider.value:F2}";
-            if (_gainLabel != null) _gainLabel.text = $"增益: {_gain:F2}";
+            if (_pointSizeLabel != null && _pointSizeSlider != null)
+            {
+                int q = Mathf.RoundToInt(_pointSizeSlider.value * 10000f);
+                if (q != _lastPointSizeQ) { _lastPointSizeQ = q; _pointSizeLabel.text = $"点大小: {_pointSizeSlider.value:F4}"; }
+            }
+            if (_windowCenterLabel != null && _windowCenterSlider != null)
+            {
+                int q = Mathf.RoundToInt(_windowCenterSlider.value * 100f);
+                if (q != _lastWindowCenterQ) { _lastWindowCenterQ = q; _windowCenterLabel.text = $"窗位: {_windowCenterSlider.value:F2}"; }
+            }
+            if (_windowWidthLabel != null && _windowWidthSlider != null)
+            {
+                int q = Mathf.RoundToInt(_windowWidthSlider.value * 100f);
+                if (q != _lastWindowWidthQ) { _lastWindowWidthQ = q; _windowWidthLabel.text = $"窗宽: {_windowWidthSlider.value:F2}"; }
+            }
+            if (_gainLabel != null)
+            {
+                int q = Mathf.RoundToInt(_gain * 100f);
+                if (q != _lastGainQ) { _lastGainQ = q; _gainLabel.text = $"增益: {_gain:F2}"; }
+            }
         }
 
         void RefreshThresholdLabels()
         {
-            if (_thresholdMinLabel != null && _thresholdMinSlider != null) _thresholdMinLabel.text = $"阈值下限: {_thresholdMinSlider.value:F0}";
-            if (_thresholdMaxLabel != null && _thresholdMaxSlider != null) _thresholdMaxLabel.text = $"阈值上限: {_thresholdMaxSlider.value:F0}";
+            if (_thresholdMinLabel != null && _thresholdMinSlider != null)
+            {
+                int q = Mathf.RoundToInt(_thresholdMinSlider.value);
+                if (q != _lastThresholdMinQ) { _lastThresholdMinQ = q; _thresholdMinLabel.text = $"阈值下限: {_thresholdMinSlider.value:F0}"; }
+            }
+            if (_thresholdMaxLabel != null && _thresholdMaxSlider != null)
+            {
+                int q = Mathf.RoundToInt(_thresholdMaxSlider.value);
+                if (q != _lastThresholdMaxQ) { _lastThresholdMaxQ = q; _thresholdMaxLabel.text = $"阈值上限: {_thresholdMaxSlider.value:F0}"; }
+            }
         }
 
         void RefreshNormalizeLabels()
         {
-            if (_normalizeMinLabel != null && _normalizeMinSlider != null) _normalizeMinLabel.text = $"归一化下限: {_normalizeMinSlider.value:F0}";
-            if (_normalizeMaxLabel != null && _normalizeMaxSlider != null) _normalizeMaxLabel.text = $"归一化上限: {_normalizeMaxSlider.value:F0}";
+            if (_normalizeMinLabel != null && _normalizeMinSlider != null)
+            {
+                int q = Mathf.RoundToInt(_normalizeMinSlider.value);
+                if (q != _lastNormalizeMinQ) { _lastNormalizeMinQ = q; _normalizeMinLabel.text = $"归一化下限: {_normalizeMinSlider.value:F0}"; }
+            }
+            if (_normalizeMaxLabel != null && _normalizeMaxSlider != null)
+            {
+                int q = Mathf.RoundToInt(_normalizeMaxSlider.value);
+                if (q != _lastNormalizeMaxQ) { _lastNormalizeMaxQ = q; _normalizeMaxLabel.text = $"归一化上限: {_normalizeMaxSlider.value:F0}"; }
+            }
         }
 
         void ApplyTint() => Shader.SetGlobalVector(_TintId, new Vector4(_tintR, _tintG, _tintB, _gain));

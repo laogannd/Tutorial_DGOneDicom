@@ -18,6 +18,9 @@ namespace Dicom.Interaction
 
         void OnEnable() => ApplyWindow();
 
+        // 停用/销毁时把全局窗宽窗位复位为全通,防止 Domain/Scene Reload 禁用下的跨会话残留
+        void OnDisable() => Shader.SetGlobalVector(_WindowId, new Vector4(0.5f, 1f, 0f, 0f));
+
         // 窗宽窗位作用于 0..1 归一化强度，shader 端做映射，零 CPU 重算
         public void SetWindow(float center, float width)
         {

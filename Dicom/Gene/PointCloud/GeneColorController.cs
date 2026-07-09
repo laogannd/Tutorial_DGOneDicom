@@ -75,6 +75,9 @@ namespace Dicom.Gene
         void Awake()
         {
             _pointCloud = GetComponent<DicomPointCloud>();
+            // LUT profile 可能是多系统共享的资产:实例化运行时副本各自持有,
+            // 使烘焙纹理/预设切换只作用于本实例,不销毁共享资产纹理也不写回污染资产
+            if (_lutProfile != null) _lutProfile = Instantiate(_lutProfile);
             // 显式初始化 shader 全局显色态,项目禁用 Domain Reload 防跨 PlayMode 残留
             ResetShaderGlobals();
             ApplyLut();
@@ -112,6 +115,11 @@ namespace Dicom.Gene
 
                 // 释放旧模型常驻数组,建新模型的常驻 CellPos/CellTag(主线程)
                 DisposeModel();
+                // 旧模型的选中掩码/当前基因长度绑定旧 CellCount,切换到不同尺寸数据集后
+                // 复用会导致 Burst Job 按新 CellCount 遍历时越界(Player 上硬崩溃),这里一并失效
+                if (_mask.IsCreated) _mask.Dispose();
+                _currentGene = null;
+                _geneRequestSeq = 0;
                 _model = model;
                 BuildNativeCells(model);
 
@@ -205,9 +213,22 @@ namespace Dicom.Gene
             if (_model == null || _currentGene == null) return;
             if (!_model.NativeReady) return;
 
+            int cellCount = _model.CellCount;
+            // 基因值数组与掩码长度必须匹配当前 CellCount,否则 Burst Job 越界读/写。
+            // 正常流程由 Load 失效+EnsureMask 保证,这里快速失败暴露装配错误而非静默越界
+            if (_currentGene.Values.Length != cellCount)
+            {
+                Debug.LogError($"基因值长度 {_currentGene.Values.Length} 与模型 CellCount {cellCount} 不匹配,跳过重建");
+                return;
+            }
+            if (_mask.IsCreated && _mask.Length != cellCount)
+            {
+                Debug.LogError($"选中掩码长度 {_mask.Length} 与模型 CellCount {cellCount} 不匹配,跳过重建");
+                return;
+            }
+
             var buildTimer = Stopwatch.StartNew();
 
-            int cellCount = _model.CellCount;
             const int blockSize = 4096;
             int blocks = (cellCount + blockSize - 1) / blockSize;
 
@@ -318,7 +339,10 @@ namespace Dicom.Gene
         // 获取常驻掩码,不存在则建全零;供 GeneBrushSelector 直接写入
         public NativeArray<byte> EnsureMask()
         {
-            if (!_mask.IsCreated && _model != null)
+            if (_model == null) return _mask;
+            // 掩码长度必须与当前模型 CellCount 一致,残留的旧长度掩码先释放再重建,防画笔 Job 越界
+            if (_mask.IsCreated && _mask.Length != _model.CellCount) _mask.Dispose();
+            if (!_mask.IsCreated)
                 _mask = new NativeArray<byte>(_model.CellCount, Allocator.Persistent);
             return _mask;
         }
@@ -430,10 +454,11 @@ namespace Dicom.Gene
             Shader.SetGlobalFloat(_ColorModeId, (float)DicomColorMode.Lut);
         }
 
-        // 运行时更换 LUT,重新烘焙上传
+        // 运行时更换 LUT,重新烘焙上传。传入资产则实例化副本持有,并回收旧副本纹理
         public void SetLutProfile(DicomLutProfile profile)
         {
-            _lutProfile = profile;
+            if (_lutProfile != null) _lutProfile.DestroyBaked();
+            _lutProfile = profile != null ? Instantiate(profile) : null;
             ApplyLut();
         }
 
@@ -472,7 +497,12 @@ namespace Dicom.Gene
             CancelOngoing();
             DisposeModel();
             if (_mask.IsCreated) _mask.Dispose();
-            if (_lutProfile != null) _lutProfile.DestroyBaked();
+            // _lutProfile 是 Awake/SetLutProfile 实例化的运行时副本,连同烘焙纹理一并销毁
+            if (_lutProfile != null)
+            {
+                _lutProfile.DestroyBaked();
+                Destroy(_lutProfile);
+            }
         }
     }
 }

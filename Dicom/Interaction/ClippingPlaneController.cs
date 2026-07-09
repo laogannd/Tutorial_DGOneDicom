@@ -75,5 +75,16 @@ namespace Dicom.Interaction
             Destroy(_planeHandle.gameObject);
             _planeHandle = null;
         }
+
+        // 组件停用时把全局裁切平面复位为永远通过,防止 LateUpdate 停跑后残留的裁切值
+        // 继续裁切其它点云(项目禁用 Domain/Scene Reload,全局着色器状态必须主动复位)
+        void OnDisable() => Shader.SetGlobalVector(_ClipPlaneId, new Vector4(0f, 1f, 0f, 1e9f));
+
+        // 手柄建为场景根物体,不随本组件销毁而连带回收,这里显式销毁防 GameObject/材质泄漏,并复位全局
+        void OnDestroy()
+        {
+            RemovePlane();
+            Shader.SetGlobalVector(_ClipPlaneId, new Vector4(0f, 1f, 0f, 1e9f));
+        }
     }
 }

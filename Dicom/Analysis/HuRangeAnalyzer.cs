@@ -22,7 +22,8 @@ namespace Dicom.Analysis
         const int MaxSegments = DicomClassificationProfile.MaxCategories;
 
         // 分析数据集,返回填充好的报告。dataset 为空或无体素时返回空报告
-        public static HuRangeReport Analyze(DicomDataset dataset)
+        // 复用调用方已常驻的体素 NativeArray,避免为直方图统计再拷一份整卷副本(大体积内存尖峰/OOM)
+        public static HuRangeReport Analyze(DicomDataset dataset, NativeArray<short> voxels)
         {
             var report = new HuRangeReport
             {
@@ -32,13 +33,12 @@ namespace Dicom.Analysis
                 Bins = new int[BinCount]
             };
 
-            if (dataset == null || dataset.Voxels == null || dataset.Voxels.Length == 0)
+            if (dataset == null || !voxels.IsCreated || voxels.Length == 0)
                 return report;
 
             int sliceVoxels = dataset.Width * dataset.Height;
             int depth = dataset.Depth;
 
-            var voxels = new NativeArray<short>(dataset.Voxels, Allocator.TempJob);
             var perSliceBins = new NativeArray<int>(depth * BinCount, Allocator.TempJob);
 
             var job = new HuHistogramJob
@@ -69,7 +69,7 @@ namespace Dicom.Analysis
             report.TotalVoxels = total;
             report.MaxBinCount = maxBin;
 
-            voxels.Dispose();
+            // voxels 由调用方持有,此处不释放;仅释放本方法分配的临时直方图
             perSliceBins.Dispose();
 
             BuildSegments(report);

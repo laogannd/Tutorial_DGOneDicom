@@ -7,7 +7,7 @@ using Dicom.Core;
 
 namespace Dicom.Gene
 {
-    // 世界空间 UGUI 基因操作面板,功能对齐 GeneDebugPanel,供 VR 手交互
+    // 世界空间 UGUI 基因操作面板,功能对齐 UnifiedDebugPanel 的基因标签页,供 VR 手交互
     // 控件引用由 GenePanelFactory 编辑器工厂绑定;兼容射线与 UIPokeBridge 手指触碰
     // 点云物体由 GeneDemoBootstrap 运行时动态创建,面板 Start 时可能尚不存在,故自动重试绑定
     [AddComponentMenu("Dicom/Gene Panel UI")]

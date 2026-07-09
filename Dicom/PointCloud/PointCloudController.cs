@@ -106,6 +106,10 @@ namespace Dicom.PointCloud
         void Awake()
         {
             _pointCloud = GetComponent<DicomPointCloud>();
+            // LUT/断点 profile 可能与其它系统(如基因显色)共享同一资产:实例化运行时副本各自持有,
+            // 使烘焙纹理销毁只作用于本实例,不影响其它引用者(分类 profile 保留共享,支持编辑器写回区间)
+            if (_lutProfile != null) _lutProfile = Instantiate(_lutProfile);
+            if (_breakpointProfile != null) _breakpointProfile = Instantiate(_breakpointProfile);
             ApplyPalette();
             ApplyLut();
             ApplyBreakpointLut();
@@ -154,7 +158,8 @@ namespace Dicom.PointCloud
                 BuildPoints(dataset);
 
                 // 加载完成后自动统计实际占用的 HU 区间,供标注分类颜色参考
-                _huReport = HuRangeAnalyzer.Analyze(dataset);
+                // 复用刚 SetVoxelCache 拷入的常驻 _voxels,避免再拷一份整卷副本造成加载瞬间内存尖峰
+                _huReport = HuRangeAnalyzer.Analyze(dataset, _voxels);
                 OnHuAnalyzed?.Invoke(_huReport);
 
                 _report.Phase = DicomLoadPhase.Completed;
@@ -342,6 +347,8 @@ namespace Dicom.PointCloud
         // 运行时调阈值后重算点云
         public void SetThreshold(float min, float max)
         {
+            // 保证 min<=max:滑块交叉时归一化,避免过滤后恒空的静默无效状态
+            if (min > max) (min, max) = (max, min);
             _thresholdMin = min;
             _thresholdMax = max;
             if (_dataset != null) BuildPoints(_dataset);
@@ -350,6 +357,8 @@ namespace Dicom.PointCloud
         // 运行时调归一化范围(影响点强度)，需重建点云
         public void SetNormalize(float min, float max)
         {
+            // 保证 min<=max:交叉会使 denom 退化到 1e-5 令强度数值爆掉(断点模式反推真实值出错)
+            if (min > max) (min, max) = (max, min);
             _normalizeMin = min;
             _normalizeMax = max;
             ApplyNormalize();
@@ -381,17 +390,19 @@ namespace Dicom.PointCloud
             SetColorMode(useClassification ? DicomColorMode.Classification : DicomColorMode.Intensity);
         }
 
-        // 运行时更换 LUT 配置，重新烘焙并上传纹理
+        // 运行时更换 LUT 配置，重新烘焙并上传纹理。传入资产则实例化副本持有,回收旧副本纹理
         public void SetLutProfile(DicomLutProfile profile)
         {
-            _lutProfile = profile;
+            if (_lutProfile != null) _lutProfile.DestroyBaked();
+            _lutProfile = profile != null ? Instantiate(profile) : null;
             ApplyLut();
         }
 
-        // 运行时更换断点配置，重新烘焙并上传纹理与值域
+        // 运行时更换断点配置，重新烘焙并上传纹理与值域。传入资产则实例化副本持有,回收旧副本纹理
         public void SetBreakpointProfile(DicomBreakpointProfile profile)
         {
-            _breakpointProfile = profile;
+            if (_breakpointProfile != null) _breakpointProfile.DestroyBaked();
+            _breakpointProfile = profile != null ? Instantiate(profile) : null;
             ApplyBreakpointLut();
         }
 
@@ -491,9 +502,9 @@ namespace Dicom.PointCloud
             CancelOngoing();
             // 释放常驻体素缓存，避免 NativeArray 泄漏(CLAUDE.md 资源生命周期约束)
             if (_voxels.IsCreated) _voxels.Dispose();
-            // 释放烘焙的 LUT 纹理，避免纹理泄漏(CLAUDE.md 资源生命周期约束)
-            if (_lutProfile != null) _lutProfile.DestroyBaked();
-            if (_breakpointProfile != null) _breakpointProfile.DestroyBaked();
+            // _lutProfile/_breakpointProfile 是运行时实例化副本,连同烘焙纹理一并销毁,避免纹理与 SO 泄漏
+            if (_lutProfile != null) { _lutProfile.DestroyBaked(); Destroy(_lutProfile); }
+            if (_breakpointProfile != null) { _breakpointProfile.DestroyBaked(); Destroy(_breakpointProfile); }
         }
     }
 }

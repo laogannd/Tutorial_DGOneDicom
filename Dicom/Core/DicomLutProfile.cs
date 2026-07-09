@@ -14,7 +14,13 @@ namespace Dicom.Core
             HotIron,    // 热铁:黑->红->橙->黄->白,放射科最常用
             Rainbow,    // 彩虹:蓝->青->绿->黄->红,强调区间差异
             Bone,       // 骨窗:偏暖白灰阶,贴近 CT 骨窗观感
-            GrayInverse // 灰度反相:白->黑,适合暗背景下看高密度
+            GrayInverse,// 灰度反相:白->黑,适合暗背景下看高密度
+            // 以下为 matplotlib viridis 系列:感知均匀 + 色盲友好,用密集控制点烘焙(见 ViridisColorData)
+            Viridis,    // 深紫->蓝->青->绿->黄,viridis 家族基准
+            Magma,      // 黑->紫红->橙->浅黄,暗背景高对比
+            Plasma,     // 深蓝->品红->橙->黄,鲜艳高饱和
+            Inferno,    // 黑->紫红->橙->亮黄,类似 magma 但更亮
+            Cividis     // 蓝->灰->黄,专为红绿色盲优化
         }
 
         // 选择内置预设;改为 Custom 可手动编辑 _gradient
@@ -44,15 +50,28 @@ namespace Dicom.Core
                 };
             }
 
-            // 预设走代码生成梯度,Custom 用 Inspector 编辑的 _gradient
-            var grad = _preset == LutPreset.Custom ? _gradient : BuildGradient(_preset);
-
             var pixels = new Color[_steps];
-            for (int i = 0; i < _steps; i++)
+
+            // viridis 系列:密集控制点数组保真插值,绕开 Gradient 上限 8 个 key 的限制
+            var viridis = GetViridisRamp(_preset);
+            if (viridis != null)
             {
-                // 取每个色阶中心处的梯度色,避免边界采到相邻阶
-                float t = _steps > 1 ? (i + 0.5f) / _steps : 0f;
-                pixels[i] = grad.Evaluate(t);
+                for (int i = 0; i < _steps; i++)
+                {
+                    float t = _steps > 1 ? (i + 0.5f) / _steps : 0f;
+                    pixels[i] = SampleRamp(viridis, t);
+                }
+            }
+            else
+            {
+                // 其余预设走代码生成梯度,Custom 用 Inspector 编辑的 _gradient
+                var grad = _preset == LutPreset.Custom ? _gradient : BuildGradient(_preset);
+                for (int i = 0; i < _steps; i++)
+                {
+                    // 取每个色阶中心处的梯度色,避免边界采到相邻阶
+                    float t = _steps > 1 ? (i + 0.5f) / _steps : 0f;
+                    pixels[i] = grad.Evaluate(t);
+                }
             }
             _baked.SetPixels(pixels);
             _baked.Apply(false, false);
@@ -73,6 +92,36 @@ namespace Dicom.Core
             else DestroyImmediate(_baked);
             _baked = null;
         }
+
+        // 预设到 viridis 控制点数组的映射;非 viridis 预设返回 null,交回 Gradient 路径
+        static ViridisColorData.Rgb[] GetViridisRamp(LutPreset preset)
+        {
+            switch (preset)
+            {
+                case LutPreset.Viridis: return ViridisColorData.Viridis;
+                case LutPreset.Magma:   return ViridisColorData.Magma;
+                case LutPreset.Plasma:  return ViridisColorData.Plasma;
+                case LutPreset.Inferno: return ViridisColorData.Inferno;
+                case LutPreset.Cividis: return ViridisColorData.Cividis;
+                default: return null;
+            }
+        }
+
+        // 在密集控制点间按归一化位置 t(0..1)线性插值取色;端点 Clamp
+        static Color SampleRamp(ViridisColorData.Rgb[] ramp, float t)
+        {
+            int n = ramp.Length;
+            if (n == 1) return ToColor(ramp[0]);
+
+            float x = Mathf.Clamp01(t) * (n - 1);
+            int lo = Mathf.FloorToInt(x);
+            int hi = Mathf.Min(lo + 1, n - 1);
+            float f = x - lo;
+            return Color.Lerp(ToColor(ramp[lo]), ToColor(ramp[hi]), f);
+        }
+
+        // 8 位 RGB 控制点转 Color(0..1),不透明
+        static Color ToColor(ViridisColorData.Rgb c) => new Color(c.R / 255f, c.G / 255f, c.B / 255f, 1f);
 
         // 按预设构造梯度;关键色 key 不超过 8 个(Gradient 上限)
         static Gradient BuildGradient(LutPreset preset)

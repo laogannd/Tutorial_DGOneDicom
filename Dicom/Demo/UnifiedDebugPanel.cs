@@ -53,7 +53,7 @@ namespace Dicom.Demo
         string _huApplyHint = "";
 
         static readonly string[] _colorModeNames = { "灰度", "分类", "LUT", "断点" };
-        static readonly string[] _lutPresetNames = { "Custom", "热铁", "彩虹", "骨窗", "灰反" };
+        static readonly string[] _lutPresetNames = { "Custom", "热铁", "彩虹", "骨窗", "灰反", "Viridis", "Magma", "Plasma", "Inferno", "Cividis" };
         static readonly string[] _reconstructAxisNames = { "X 轴", "Y 轴", "Z 轴" };
 
         // === 基因状态 ===
