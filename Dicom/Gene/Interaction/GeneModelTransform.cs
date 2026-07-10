@@ -1,12 +1,14 @@
 using System;
 using UnityEngine;
 
+using Dicom.Interaction;
+
 namespace Dicom.Gene
 {
     // 基因点云的初始尺寸适配与位姿复位,仿 DicomModelTransform 但依赖 GeneColorController
     // cell 按 (grid - center) * spacing(mm) 布局,原始尺寸偏大,加载完成据体积最大维度缩到目标世界尺寸
     [RequireComponent(typeof(GeneColorController))]
-    public class GeneModelTransform : MonoBehaviour
+    public class GeneModelTransform : MonoBehaviour, IPointCloudManipulable
     {
         // 适配后模型最大维度的目标世界尺寸(米)
         [SerializeField] float _targetWorldSize = 0.5f;

@@ -48,6 +48,11 @@ namespace Dicom.Gene
         [SerializeField] Button _clearButton;
         [SerializeField] Button _analyzeButton;
         [SerializeField] TextMeshProUGUI _selectionLabel;
+        // 深度切片:中心前后移动切片,厚度收窄穿透深度(0..1,1=全深度)
+        [SerializeField] Slider _depthCenterSlider;
+        [SerializeField] TextMeshProUGUI _depthCenterLabel;
+        [SerializeField] Slider _depthThicknessSlider;
+        [SerializeField] TextMeshProUGUI _depthThicknessLabel;
 
         [Header("区域结果")]
         [SerializeField] TextMeshProUGUI _regionNameLabel;
@@ -169,6 +174,13 @@ namespace Dicom.Gene
             if (_clearButton != null) _clearButton.onClick.AddListener(OnClearSelection);
             if (_analyzeButton != null) _analyzeButton.onClick.AddListener(OnAnalyze);
 
+            if (_brush != null)
+            {
+                ConfigSlider(_depthCenterSlider, 0f, 1f, _brush.DepthCenter, OnDepthCenterChanged);
+                ConfigSlider(_depthThicknessSlider, 0f, 1f, _brush.DepthThickness, OnDepthThicknessChanged);
+                RefreshDepthLabels();
+            }
+
             if (_resetTransformButton != null) _resetTransformButton.onClick.AddListener(OnResetTransform);
 
             // top 基因按钮:按索引绑定点击,初始隐藏
@@ -285,6 +297,25 @@ namespace Dicom.Gene
             if (_brush != null) _brush.ClearSelection();
             _report = null;
             RefreshRegionResult();
+        }
+
+        void OnDepthCenterChanged(float v)
+        {
+            if (_brush != null) _brush.DepthCenter = v;
+            RefreshDepthLabels();
+        }
+
+        void OnDepthThicknessChanged(float v)
+        {
+            if (_brush != null) _brush.DepthThickness = v;
+            RefreshDepthLabels();
+        }
+
+        void RefreshDepthLabels()
+        {
+            if (_brush == null) return;
+            if (_depthCenterLabel != null) _depthCenterLabel.text = $"深度中心: {_brush.DepthCenter:F2}";
+            if (_depthThicknessLabel != null) _depthThicknessLabel.text = $"深度厚度: {_brush.DepthThickness:F2}";
         }
 
         void OnSelectionChanged(int count)

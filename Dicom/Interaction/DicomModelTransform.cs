@@ -11,7 +11,7 @@ namespace Dicom.Interaction
     // 加载完成后据体积最大维度自动算出适配缩放,把模型压到 _targetWorldSize 米级
     // 同时记录加载时的 Home 位姿(由放置点决定),供一键复位防止模型被甩飞/抓丢
     [RequireComponent(typeof(PointCloudController))]
-    public class DicomModelTransform : MonoBehaviour
+    public class DicomModelTransform : MonoBehaviour, IPointCloudManipulable
     {
         // 适配后模型最大维度的目标世界尺寸(米),0.5 约等于手动 0.002 缩放 512 体积的效果
         [SerializeField] float _targetWorldSize = 0.5f;

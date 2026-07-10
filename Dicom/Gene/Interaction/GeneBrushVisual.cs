@@ -25,6 +25,7 @@ namespace Dicom.Gene
         DicomPointCloud _overlay;
 
         static readonly int _BaseColorId = Shader.PropertyToID("_BaseColor");
+        static readonly int _ZTestId = Shader.PropertyToID("_ZTest");
 
         void Awake()
         {
@@ -121,6 +122,7 @@ namespace Dicom.Gene
         }
 
         // URP Unlit 材质,内置管线回退;参考 DicomBoundingBoxVisualizer
+        // ZTest Always + Overlay 队列:套索圈置顶渲染,不被点云遮挡
         static Material CreateMaterial(Color color)
         {
             var urp = Shader.Find("Universal Render Pipeline/Unlit");
@@ -128,16 +130,35 @@ namespace Dicom.Gene
             {
                 var mat = new Material(urp);
                 mat.SetColor(_BaseColorId, color);
+                MakeOverlay(mat);
                 return mat;
             }
 
             var sprite = Shader.Find("Sprites/Default");
-            if (sprite != null) return new Material(sprite) { color = color };
+            if (sprite != null)
+            {
+                var mat = new Material(sprite) { color = color };
+                MakeOverlay(mat);
+                return mat;
+            }
             var unlit = Shader.Find("Unlit/Color");
-            if (unlit != null) return new Material(unlit) { color = color };
+            if (unlit != null)
+            {
+                var mat = new Material(unlit) { color = color };
+                MakeOverlay(mat);
+                return mat;
+            }
 
             Debug.LogWarning("套索线所需 shader 均被剥离(建议加入 Always Included Shaders)");
             return null;
+        }
+
+        // 置顶渲染:关闭深度测试(始终通过)并放到 Overlay 队列最后绘制,使圈盖在点云之上
+        static void MakeOverlay(Material mat)
+        {
+            if (mat.HasProperty(_ZTestId))
+                mat.SetInt(_ZTestId, (int)UnityEngine.Rendering.CompareFunction.Always);
+            mat.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Overlay;
         }
     }
 }

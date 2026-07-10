@@ -21,15 +21,15 @@ namespace Dicom.Interaction
         // 射线可视化,可不填
         [SerializeField] LineRenderer _line;
 
-        // 当前射线悬停/拖动命中的点云模型,无命中为 null
-        DicomModelTransform _target;
+        // 当前射线悬停/拖动命中的点云模型,无命中为 null;认接口故 DICOM/基因通用
+        IPointCloudManipulable _target;
         Vector3 _rayOrigin;
         Vector3 _rayDirection;
         float _hitDistance;
         bool _gripping;
 
         public Hand Hand => _hand;
-        public DicomModelTransform Target => _target;
+        public IPointCloudManipulable Target => _target;
         public Vector3 RayOrigin => _rayOrigin;
         public Vector3 RayDirection => _rayDirection;
         // 命中点到射线起点的距离,拖动时锚点 = RayOrigin + RayDirection * HitDistance
@@ -73,7 +73,7 @@ namespace Dicom.Interaction
 
             if (hit)
             {
-                var model = info.transform.GetComponent<DicomModelTransform>();
+                var model = info.transform.GetComponent<IPointCloudManipulable>();
                 _target = model;
                 _hitDistance = info.distance;
                 UpdateLine(info.point);

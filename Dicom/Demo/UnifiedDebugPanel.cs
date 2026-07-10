@@ -601,8 +601,17 @@ namespace Dicom.Demo
         {
             if (_brush == null) { GUILayout.Label("未绑定 GeneBrushSelector"); return; }
 
-            bool on = GUILayout.Toggle(_brush.BrushEnabled, " 启用画笔(捏合画圈)");
+            bool on = GUILayout.Toggle(_brush.BrushEnabled, " 启用画笔(视角圈选)");
             if (on != _brush.BrushEnabled) _brush.SetEnabled(on);
+
+            // 深度切片:中心前后移动切片,厚度收窄穿透深度(1=全深度)
+            GUILayout.Label($"深度中心: {_brush.DepthCenter:F2}");
+            float dc = GUILayout.HorizontalSlider(_brush.DepthCenter, 0f, 1f);
+            if (!Mathf.Approximately(dc, _brush.DepthCenter)) _brush.DepthCenter = dc;
+
+            GUILayout.Label($"深度厚度: {_brush.DepthThickness:F2}");
+            float dt = GUILayout.HorizontalSlider(_brush.DepthThickness, 0f, 1f);
+            if (!Mathf.Approximately(dt, _brush.DepthThickness)) _brush.DepthThickness = dt;
 
             GUILayout.Label($"已选 cell: {_selectedCount:N0}");
             GUILayout.BeginHorizontal();

@@ -10,7 +10,6 @@ namespace Dicom.Interaction
     // 单手 grip 指向自己:模型跟随该手射线锚点平移(锚点 = 射线起点 + 方向 * 命中距离)
     // 双手 grip 同时指向自己:两手连线长度比控缩放,连线方向变化控旋转,绕两手中点
     // 与扳机近距离物理抓取并存:自身被物理抓取(HeldCount>0)时让位
-    [RequireComponent(typeof(DicomModelTransform))]
     [DefaultExecutionOrder(5)]
     public class DicomRayManipulator : MonoBehaviour
     {
@@ -19,7 +18,8 @@ namespace Dicom.Interaction
         // 自动查找重试间隔:手与模型创建时机不定,查不到时按间隔重试
         [SerializeField] float _autoFindRetryInterval = 0.5f;
 
-        DicomModelTransform _self;
+        // 认接口故 DICOM/基因通用
+        IPointCloudManipulable _self;
         Grabbable _grabbable;
 
         // 本帧指向自己且 grip 的指针,复用列表避免每帧 GC
@@ -39,8 +39,14 @@ namespace Dicom.Interaction
 
         void Awake()
         {
-            _self = GetComponent<DicomModelTransform>();
-            // Grabbable 由 DicomGrabbableSetup 在更早的 AddComponent 中建好,这里取得到;取不到则物理抓取判定返回 false
+            _self = GetComponent<IPointCloudManipulable>();
+            if (_self == null)
+            {
+                Debug.LogError("DicomRayManipulator 未找到 IPointCloudManipulable(需与 DicomModelTransform/GeneModelTransform 同物体),已禁用");
+                enabled = false;
+                return;
+            }
+            // Grabbable 由 GrabbableSetup 在更早的 AddComponent 中建好,这里取得到;取不到则物理抓取判定返回 false
             _grabbable = GetComponent<Grabbable>();
             EnsurePointers();
         }
@@ -50,6 +56,9 @@ namespace Dicom.Interaction
             EnsurePointers();
             // 自身正被扳机物理抓取时,让位给物理抓取,不做射线操控
             if (IsPhysicallyHeld()) { Reset(); return; }
+            // 画笔开启时 GeneGrabbableSetup 会禁用 Grabbable:此时让位给套索,避免 grip 同时驱动拖动与画圈
+            // DICOM 侧 Grabbable 常开,不受影响
+            if (_grabbable != null && !_grabbable.enabled) { Reset(); return; }
 
             CollectActive();
 

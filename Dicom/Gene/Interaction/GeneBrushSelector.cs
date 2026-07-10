@@ -8,9 +8,10 @@ using Autohand;
 
 namespace Dicom.Gene
 {
-    // 空间套索:捏合指向点云画圈,松开时以手部射线视锥投影选中圈内 cell,写 GeneColorController 选中掩码(mode2)
+    // 相机视角套索:手射线用于瞄准,命中点投到相机视口得 2D 光标,用户在视野里画闭合圈(等价屏幕圈选)
+    // 松开时以相机为锥顶把每个 cell 投到视口做多边形内点判定,并按深度切片收窄选区
     // 激活信号 = 控制器 grip(GetTriggerAxis) 或 徒手捏合(拇指尖↔食指尖) 任一达标,两者并存
-    // 锥顶 = 激活手 palmTransform 起始位置;画圈期间采样 palmTransform.forward 方向,松开构建闭合多边形
+    // 视口光标做 EMA 低通消抖(治乱飞);圈画在相机正前方固定距离,天然不被点云遮挡
     // 画笔开启期间禁用抓取避免误抓;命中测试单次(松开那帧),绝不每帧重建
     [RequireComponent(typeof(GeneColorController))]
     public class GeneBrushSelector : MonoBehaviour
@@ -20,28 +21,37 @@ namespace Dicom.Gene
         // 徒手捏合:拇指尖↔食指尖距离阈值,按两指尖半径和缩放;滞回防抖(enter 小于 exit)
         [SerializeField] float _pinchEnterScale = 1.6f;
         [SerializeField] float _pinchExitScale = 2.4f;
-        // 采样节流:相邻采样方向夹角超过此角度(度)才记一点,防同向堆积
-        [SerializeField] float _sampleAngleDeg = 1.5f;
+        // 视口光标 EMA 平滑系数(0..1,越小越平滑越跟手弱);治手势追踪抖动
+        [SerializeField] float _smoothK = 0.35f;
+        // 采样节流:相邻视口光标距离超此值(视口单位 0..1)才记一点,防同点堆积
+        [SerializeField] float _sampleMinDist = 0.01f;
         // 采样点上限,防长时间画圈溢出
         [SerializeField] int _maxSamples = 256;
+        // 套索圈画在相机正前方的距离(米),仅影响可视化不影响命中
+        [SerializeField] float _lineDistance = 0.5f;
 
         GeneColorController _controller;
         GeneGrabbableSetup _grabbable;
         Hand[] _hands;
         float _nextHandScan;
 
+        Camera _camera;
+
         // 每只手的捏合滞回状态(手实例->是否处于捏合中),避免边界抖动反复触发
         readonly Dictionary<Hand, bool> _pinchState = new Dictionary<Hand, bool>();
 
         bool _enabled;
 
-        // 画圈状态:锥顶固定为起笔 palm 位置,采样存 palmTransform.forward 方向
+        // 深度切片:中心(0..1,0.5=模型中心)与厚度(0..1,1=全深度=兼容旧穿透)
+        float _depthCenter = 0.5f;
+        float _depthThickness = 1f;
+
+        // 画圈状态:视口空间(0..1)采样点 + EMA 光标
         bool _drawing;
-        float3 _apex;
-        float _drawDistance = 1f;
-        float3 _lastSampleDir;
-        readonly List<float3> _sampleDirs = new List<float3>(256);
-        // 供 visual 画线:采样方向反算到锥顶前固定距离的世界点
+        float2 _smoothed;
+        bool _hasSmoothed;
+        readonly List<float2> _viewportSamples = new List<float2>(256);
+        // 供 visual 画线:视口采样反投到相机正前方固定距离的世界点,每帧重建随头动跟随
         readonly List<Vector3> _trajectoryWorld = new List<Vector3>(256);
 
         // 选中集变化(画圈/清除后触发),携带当前选中数;供 overlay 高亮与面板刷新
@@ -52,8 +62,19 @@ namespace Dicom.Gene
 
         // 画圈中:供 visual 显示轨迹线
         public bool Drawing => _drawing;
-        public Vector3 Apex => (Vector3)_apex;
         public IReadOnlyList<Vector3> TrajectoryWorld => _trajectoryWorld;
+
+        // 深度切片参数(面板绑定),clamp 到有效范围
+        public float DepthCenter
+        {
+            get => _depthCenter;
+            set => _depthCenter = Mathf.Clamp01(value);
+        }
+        public float DepthThickness
+        {
+            get => _depthThickness;
+            set => _depthThickness = Mathf.Clamp01(value);
+        }
 
         void Awake()
         {
@@ -83,96 +104,124 @@ namespace Dicom.Gene
             if (!_enabled) return;
             if (_controller.Model == null || !_controller.Model.NativeReady) return;
 
+            var cam = GetCamera();
+            if (cam == null) return;
+
             FindActiveHand(out bool active, out Vector3 origin, out Vector3 forward);
 
             if (active)
             {
-                if (!_drawing) BeginDraw(origin);
-                SampleDraw(forward);
+                if (!_drawing) BeginDraw();
+                SampleDraw(cam, origin, forward);
             }
             else if (_drawing)
             {
-                CommitLasso();
+                CommitLasso(cam);
                 EndDraw();
             }
         }
 
-        // 起笔:锁定锥顶,记画圈显示距离(锥顶到模型中心),清采样
-        void BeginDraw(Vector3 origin)
+        void BeginDraw()
         {
             _drawing = true;
-            _apex = (float3)origin;
-            _drawDistance = Mathf.Max(0.05f, Vector3.Distance(origin, transform.position));
-            _sampleDirs.Clear();
+            _hasSmoothed = false;
+            _viewportSamples.Clear();
             _trajectoryWorld.Clear();
         }
 
         void EndDraw()
         {
             _drawing = false;
-            _sampleDirs.Clear();
+            _hasSmoothed = false;
+            _viewportSamples.Clear();
             _trajectoryWorld.Clear();
         }
 
-        // 采样当前射线方向,按夹角节流,反算世界点供画线
-        void SampleDraw(Vector3 forward)
+        // 采样:手射线与"面向相机、过模型中心"的平面求交得世界光标 -> 视口 -> EMA 平滑 -> 按距离节流
+        // 每帧重建轨迹世界点(反投到相机正前方固定距离),使圈随头动稳定显示在眼前
+        void SampleDraw(Camera cam, Vector3 origin, Vector3 forward)
         {
-            float3 dir = math.normalizesafe((float3)forward);
-            if (math.lengthsq(dir) < 1e-8f) return;
+            if (!RayToViewPlane(cam, origin, forward, out float2 viewport)) return;
 
-            if (_sampleDirs.Count > 0)
+            if (!_hasSmoothed)
             {
-                if (_sampleDirs.Count >= _maxSamples) return;
-                // 夹角不足阈值则跳过,避免同向堆积
-                if (math.dot(dir, _lastSampleDir) >= math.cos(math.radians(_sampleAngleDeg)))
-                    return;
+                _smoothed = viewport;
+                _hasSmoothed = true;
+            }
+            else
+            {
+                _smoothed = math.lerp(_smoothed, viewport, Mathf.Clamp01(_smoothK));
             }
 
-            _lastSampleDir = dir;
-            _sampleDirs.Add(dir);
-            _trajectoryWorld.Add((Vector3)(_apex + dir * _drawDistance));
+            bool add = _viewportSamples.Count == 0;
+            if (!add && _viewportSamples.Count < _maxSamples)
+                add = math.distance(_smoothed, _viewportSamples[_viewportSamples.Count - 1]) >= _sampleMinDist;
+
+            if (add) _viewportSamples.Add(_smoothed);
+
+            RebuildTrajectory(cam);
         }
 
-        // 松开:采样点 >=3 时构建视锥基与多边形,调度 Job 置位掩码(累积 OR)
-        void CommitLasso()
+        // 手射线与过模型中心、法线朝相机的平面求交,命中点转视口(0..1)
+        bool RayToViewPlane(Camera cam, Vector3 origin, Vector3 forward, out float2 viewport)
         {
-            if (_sampleDirs.Count < 3) return;
+            viewport = default;
 
-            // 视锥前向轴取采样方向均值;右/上向由世界上向叉乘得正交基,退化时换参考轴
-            float3 forward = float3.zero;
-            for (int i = 0; i < _sampleDirs.Count; i++) forward += _sampleDirs[i];
-            forward = math.normalizesafe(forward, new float3(0f, 0f, 1f));
+            Vector3 planePoint = transform.position;
+            Vector3 n = cam.transform.forward;
+            float denom = Vector3.Dot(forward, n);
+            // 射线与平面近平行:无稳定交点,跳过
+            if (Mathf.Abs(denom) < 1e-4f) return false;
 
-            float3 refUp = math.abs(math.dot(forward, math.up())) > 0.99f ? math.right() : math.up();
-            float3 right = math.normalizesafe(math.cross(refUp, forward), math.right());
-            float3 up = math.cross(forward, right);
+            float t = Vector3.Dot(planePoint - origin, n) / denom;
+            // 交点在射线背后:跳过
+            if (t <= 0f) return false;
 
-            // 采样方向投影到 f=1 平面得多边形 uv;背向的采样点跳过
-            var poly = new List<float2>(_sampleDirs.Count);
-            for (int i = 0; i < _sampleDirs.Count; i++)
+            Vector3 world = origin + forward * t;
+            Vector3 vp = cam.WorldToViewportPoint(world);
+            // 相机背后:排除
+            if (vp.z <= 0f) return false;
+
+            viewport = new float2(vp.x, vp.y);
+            return true;
+        }
+
+        // 视口采样反投到相机正前方 _lineDistance 处的世界点,供 LineRenderer 画圈
+        void RebuildTrajectory(Camera cam)
+        {
+            _trajectoryWorld.Clear();
+            for (int i = 0; i < _viewportSamples.Count; i++)
             {
-                float3 d = _sampleDirs[i];
-                float f = math.dot(d, forward);
-                if (f <= 1e-4f) continue;
-                poly.Add(new float2(math.dot(d, right) / f, math.dot(d, up) / f));
+                float2 uv = _viewportSamples[i];
+                _trajectoryWorld.Add(cam.ViewportToWorldPoint(new Vector3(uv.x, uv.y, _lineDistance)));
             }
-            if (poly.Count < 3) return;
+        }
 
-            var polygon = new NativeArray<float2>(poly.Count, Allocator.TempJob);
+        // 松开:采样点 >=3 时以相机视口多边形 + 深度切片调度 Job 置位掩码(累积 OR)
+        void CommitLasso(Camera cam)
+        {
+            if (_viewportSamples.Count < 3) return;
+
+            float4x4 viewProj = math.mul((float4x4)cam.projectionMatrix, (float4x4)cam.worldToCameraMatrix);
+            float4x4 localToWorld = (float4x4)transform.localToWorldMatrix;
+
+            // 深度范围:模型局部包围盒 8 角投到视口取深度(clip.w)极值,按中心/厚度收窄
+            if (!ComputeDepthRange(viewProj, localToWorld, out float depthMin, out float depthMax)) return;
+
+            var polygon = new NativeArray<float2>(_viewportSamples.Count, Allocator.TempJob);
             try
             {
-                for (int i = 0; i < poly.Count; i++) polygon[i] = poly[i];
+                for (int i = 0; i < _viewportSamples.Count; i++) polygon[i] = _viewportSamples[i];
 
                 var mask = _controller.EnsureMask();
                 new GeneLassoJob
                 {
                     CellPos = _controller.Model.CellPos,
-                    LocalToWorld = (float4x4)transform.localToWorldMatrix,
-                    Apex = _apex,
-                    Forward = forward,
-                    Right = right,
-                    Up = up,
+                    LocalToWorld = localToWorld,
+                    ViewProj = viewProj,
                     Polygon = polygon,
+                    DepthMin = depthMin,
+                    DepthMax = depthMax,
                     Mask = mask
                 }.Schedule(_controller.Model.CellCount, 4096).Complete();
             }
@@ -182,6 +231,40 @@ namespace Dicom.Gene
             }
 
             RaiseSelectionChanged();
+        }
+
+        // 模型局部包围盒 8 角变换到裁剪空间取 w(视深度)极值;按 _depthCenter/_depthThickness 收窄为切片
+        bool ComputeDepthRange(float4x4 viewProj, float4x4 localToWorld, out float depthMin, out float depthMax)
+        {
+            depthMin = 0f;
+            depthMax = 0f;
+
+            Bounds b = _controller.LocalBounds;
+            Vector3 c = b.center;
+            Vector3 e = b.extents;
+
+            float lo = float.MaxValue;
+            float hi = float.MinValue;
+            for (int i = 0; i < 8; i++)
+            {
+                Vector3 corner = c + new Vector3(
+                    (i & 1) == 0 ? -e.x : e.x,
+                    (i & 2) == 0 ? -e.y : e.y,
+                    (i & 4) == 0 ? -e.z : e.z);
+                float4 world = math.mul(localToWorld, new float4((float3)corner, 1f));
+                float4 clip = math.mul(viewProj, world);
+                if (clip.w <= 1e-5f) continue;
+                lo = math.min(lo, clip.w);
+                hi = math.max(hi, clip.w);
+            }
+            // 全部角在相机背后:无有效深度
+            if (lo > hi) return false;
+
+            float mid = math.lerp(lo, hi, _depthCenter);
+            float half = (hi - lo) * _depthThickness * 0.5f;
+            depthMin = mid - half;
+            depthMax = mid + half;
+            return true;
         }
 
         // 统计当前选中数并派发;画圈单次触发故频率低
@@ -255,6 +338,13 @@ namespace Dicom.Gene
             Transform t = h.palmTransform != null ? h.palmTransform : h.transform;
             origin = t.position;
             forward = t.forward;
+        }
+
+        // 主相机缓存,丢失时重取(不静默默认:取不到返回 null 由调用方跳过)
+        Camera GetCamera()
+        {
+            if (_camera == null) _camera = Camera.main;
+            return _camera;
         }
 
         void EnsureHands()

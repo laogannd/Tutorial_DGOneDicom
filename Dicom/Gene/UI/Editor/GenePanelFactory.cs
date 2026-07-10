@@ -106,6 +106,8 @@ namespace Dicom.UI.EditorTools
             public Toggle BrushToggle;
             public Button ClearButton, AnalyzeButton;
             public TextMeshProUGUI SelectionLabel;
+            public Slider DepthCenter, DepthThickness;
+            public TextMeshProUGUI DepthCenterLabel, DepthThicknessLabel;
             public TextMeshProUGUI RegionNameLabel;
             public Button[] TopGeneButtons = new Button[GeneTopSlots];
             public TextMeshProUGUI[] TopGeneLabels = new TextMeshProUGUI[GeneTopSlots];
@@ -135,7 +137,11 @@ namespace Dicom.UI.EditorTools
             r.LutPresetButton = CreateButton("LutPresetButton", colormap, "切换 Colormap");
 
             var brush = CreateSection(content, "空间画笔 (mode2)", true);
-            r.BrushToggle = CreateToggle("BrushToggle", brush, "启用画笔(捏合画圈)");
+            r.BrushToggle = CreateToggle("BrushToggle", brush, "启用画笔(视角圈选)");
+            r.DepthCenterLabel = CreateLabel("DepthCenterLabel", brush, "深度中心: 0.50", 20f, LabelHeight);
+            r.DepthCenter = CreateSlider("DepthCenterSlider", brush);
+            r.DepthThicknessLabel = CreateLabel("DepthThicknessLabel", brush, "深度厚度: 1.00", 20f, LabelHeight);
+            r.DepthThickness = CreateSlider("DepthThicknessSlider", brush);
             r.SelectionLabel = CreateLabel("SelectionLabel", brush, "已选 cell: 0", 20f, LabelHeight);
             r.ClearButton = CreateButton("ClearButton", brush, "清除选择");
             r.AnalyzeButton = CreateButton("AnalyzeButton", brush, "确认分析");
@@ -173,6 +179,10 @@ namespace Dicom.UI.EditorTools
             Set(so, "_clearButton", r.ClearButton);
             Set(so, "_analyzeButton", r.AnalyzeButton);
             Set(so, "_selectionLabel", r.SelectionLabel);
+            Set(so, "_depthCenterSlider", r.DepthCenter);
+            Set(so, "_depthCenterLabel", r.DepthCenterLabel);
+            Set(so, "_depthThicknessSlider", r.DepthThickness);
+            Set(so, "_depthThicknessLabel", r.DepthThicknessLabel);
             Set(so, "_regionNameLabel", r.RegionNameLabel);
             SetArray(so, "_topGeneButtons", r.TopGeneButtons);
             SetArray(so, "_topGeneLabels", r.TopGeneLabels);

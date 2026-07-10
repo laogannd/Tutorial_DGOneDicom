@@ -3,6 +3,7 @@ using UnityEngine;
 
 using Dicom.Core;
 using Dicom.Demo;
+using Dicom.Interaction;
 using Dicom.PointCloud;
 
 namespace Dicom.Gene
@@ -54,6 +55,8 @@ namespace Dicom.Gene
             var grabbableSetup = go.AddComponent<GeneGrabbableSetup>();
             grabbableSetup.ExcludeLayers = _excludeLayers;
             var modelTransform = go.AddComponent<GeneModelTransform>();
+            // 远程射线操控:自治组件,Awake 自动发现场景内的 DicomRayPointer(与 DICOM 同源),认接口故支持基因物体
+            go.AddComponent<DicomRayManipulator>();
             // 画笔选择器 + 可视化(mode2);默认不启用,由面板开关
             var brush = go.AddComponent<GeneBrushSelector>();
             go.AddComponent<GeneBrushVisual>();
