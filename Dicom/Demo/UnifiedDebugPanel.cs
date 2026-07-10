@@ -58,7 +58,6 @@ namespace Dicom.Demo
 
         // === 基因状态 ===
         static readonly string[] _geneModeNames = { "mode1 整体", "mode2 区域" };
-        static readonly string[] _brushModeNames = { "球形涂抹", "盒框选" };
         string[] _genes;
         int _selectedGeneIdx = -1;
         // 0=mode1 整体, 1=mode2 区域
@@ -602,15 +601,8 @@ namespace Dicom.Demo
         {
             if (_brush == null) { GUILayout.Label("未绑定 GeneBrushSelector"); return; }
 
-            bool on = GUILayout.Toggle(_brush.BrushEnabled, " 启用画笔(扳机涂抹)");
+            bool on = GUILayout.Toggle(_brush.BrushEnabled, " 启用画笔(捏合画圈)");
             if (on != _brush.BrushEnabled) _brush.SetEnabled(on);
-
-            int bm = GUILayout.Toolbar((int)_brush.Mode, _brushModeNames);
-            if (bm != (int)_brush.Mode) _brush.SetMode((GeneBrushSelector.BrushMode)bm);
-
-            GUILayout.Label($"笔刷半径: {_brush.WorldRadius * 100f:F1} cm");
-            float r = GUILayout.HorizontalSlider(_brush.WorldRadius, 0.005f, 0.2f);
-            if (!Mathf.Approximately(r, _brush.WorldRadius)) _brush.SetWorldRadius(r);
 
             GUILayout.Label($"已选 cell: {_selectedCount:N0}");
             GUILayout.BeginHorizontal();

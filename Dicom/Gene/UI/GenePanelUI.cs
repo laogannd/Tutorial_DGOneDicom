@@ -45,10 +45,6 @@ namespace Dicom.Gene
 
         [Header("空间画笔 (mode2)")]
         [SerializeField] Toggle _brushToggle;
-        [SerializeField] Button _brushModeButton;
-        [SerializeField] TextMeshProUGUI _brushModeLabel;
-        [SerializeField] Slider _radiusSlider;
-        [SerializeField] TextMeshProUGUI _radiusLabel;
         [SerializeField] Button _clearButton;
         [SerializeField] Button _analyzeButton;
         [SerializeField] TextMeshProUGUI _selectionLabel;
@@ -63,8 +59,6 @@ namespace Dicom.Gene
         [SerializeField] Slider _modelScaleSlider;
         [SerializeField] TextMeshProUGUI _modelScaleLabel;
         [SerializeField] Button _resetTransformButton;
-
-        static readonly string[] _brushModeNames = { "球形涂抹", "盒框选" };
 
         string[] _genes;
         int _geneIdx = -1;
@@ -172,8 +166,6 @@ namespace Dicom.Gene
                 _brushToggle.isOn = false;
                 _brushToggle.onValueChanged.AddListener(OnBrushToggle);
             }
-            if (_brushModeButton != null) _brushModeButton.onClick.AddListener(OnCycleBrushMode);
-            ConfigSlider(_radiusSlider, 0.005f, 0.2f, 0.03f, OnRadiusChanged);
             if (_clearButton != null) _clearButton.onClick.AddListener(OnClearSelection);
             if (_analyzeButton != null) _analyzeButton.onClick.AddListener(OnAnalyze);
 
@@ -193,8 +185,6 @@ namespace Dicom.Gene
                 }
             }
 
-            RefreshBrushModeLabel();
-            RefreshRadiusLabel();
             RefreshRegionResult();
         }
 
@@ -288,34 +278,6 @@ namespace Dicom.Gene
         void OnBrushToggle(bool on)
         {
             if (_brush != null) _brush.SetEnabled(on && _regionMode);
-        }
-
-        void OnCycleBrushMode()
-        {
-            if (_brush == null) return;
-            var next = _brush.Mode == GeneBrushSelector.BrushMode.Sphere
-                ? GeneBrushSelector.BrushMode.Box
-                : GeneBrushSelector.BrushMode.Sphere;
-            _brush.SetMode(next);
-            RefreshBrushModeLabel();
-        }
-
-        void RefreshBrushModeLabel()
-        {
-            if (_brushModeLabel == null || _brush == null) return;
-            _brushModeLabel.text = $"笔刷: {_brushModeNames[(int)_brush.Mode]}";
-        }
-
-        void OnRadiusChanged(float v)
-        {
-            if (_brush != null) _brush.SetWorldRadius(v);
-            RefreshRadiusLabel();
-        }
-
-        void RefreshRadiusLabel()
-        {
-            if (_radiusLabel == null || _radiusSlider == null) return;
-            _radiusLabel.text = $"笔刷半径: {_radiusSlider.value * 100f:F1} cm";
         }
 
         void OnClearSelection()

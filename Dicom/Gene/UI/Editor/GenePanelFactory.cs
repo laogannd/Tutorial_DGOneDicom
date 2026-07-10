@@ -104,10 +104,6 @@ namespace Dicom.UI.EditorTools
             public Button LutPresetButton;
             public TextMeshProUGUI LutPresetLabel;
             public Toggle BrushToggle;
-            public Button BrushModeButton;
-            public TextMeshProUGUI BrushModeLabel;
-            public Slider Radius;
-            public TextMeshProUGUI RadiusLabel;
             public Button ClearButton, AnalyzeButton;
             public TextMeshProUGUI SelectionLabel;
             public TextMeshProUGUI RegionNameLabel;
@@ -139,11 +135,7 @@ namespace Dicom.UI.EditorTools
             r.LutPresetButton = CreateButton("LutPresetButton", colormap, "切换 Colormap");
 
             var brush = CreateSection(content, "空间画笔 (mode2)", true);
-            r.BrushToggle = CreateToggle("BrushToggle", brush, "启用画笔(扳机涂抹)");
-            r.BrushModeLabel = CreateLabel("BrushModeLabel", brush, "笔刷: 球形涂抹", 20f, LabelHeight);
-            r.BrushModeButton = CreateButton("BrushModeButton", brush, "切换 球形/盒选");
-            r.RadiusLabel = CreateLabel("RadiusLabel", brush, "笔刷半径: 3.0 cm", 20f, LabelHeight);
-            r.Radius = CreateSlider("RadiusSlider", brush);
+            r.BrushToggle = CreateToggle("BrushToggle", brush, "启用画笔(捏合画圈)");
             r.SelectionLabel = CreateLabel("SelectionLabel", brush, "已选 cell: 0", 20f, LabelHeight);
             r.ClearButton = CreateButton("ClearButton", brush, "清除选择");
             r.AnalyzeButton = CreateButton("AnalyzeButton", brush, "确认分析");
@@ -178,10 +170,6 @@ namespace Dicom.UI.EditorTools
             Set(so, "_lutPresetButton", r.LutPresetButton);
             Set(so, "_lutPresetLabel", r.LutPresetLabel);
             Set(so, "_brushToggle", r.BrushToggle);
-            Set(so, "_brushModeButton", r.BrushModeButton);
-            Set(so, "_brushModeLabel", r.BrushModeLabel);
-            Set(so, "_radiusSlider", r.Radius);
-            Set(so, "_radiusLabel", r.RadiusLabel);
             Set(so, "_clearButton", r.ClearButton);
             Set(so, "_analyzeButton", r.AnalyzeButton);
             Set(so, "_selectionLabel", r.SelectionLabel);
