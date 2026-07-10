@@ -601,17 +601,13 @@ namespace Dicom.Demo
         {
             if (_brush == null) { GUILayout.Label("未绑定 GeneBrushSelector"); return; }
 
-            bool on = GUILayout.Toggle(_brush.BrushEnabled, " 启用画笔(视角圈选)");
+            bool on = GUILayout.Toggle(_brush.BrushEnabled, " 启用画笔(球形)");
             if (on != _brush.BrushEnabled) _brush.SetEnabled(on);
 
-            // 深度切片:中心前后移动切片,厚度收窄穿透深度(1=全深度)
-            GUILayout.Label($"深度中心: {_brush.DepthCenter:F2}");
-            float dc = GUILayout.HorizontalSlider(_brush.DepthCenter, 0f, 1f);
-            if (!Mathf.Approximately(dc, _brush.DepthCenter)) _brush.DepthCenter = dc;
-
-            GUILayout.Label($"深度厚度: {_brush.DepthThickness:F2}");
-            float dt = GUILayout.HorizontalSlider(_brush.DepthThickness, 0f, 1f);
-            if (!Mathf.Approximately(dt, _brush.DepthThickness)) _brush.DepthThickness = dt;
+            // 笔刷半径(世界米):球形笔刷伸进点云扫过染色的作用半径
+            GUILayout.Label($"笔刷半径: {_brush.BrushRadius * 100f:F1} cm");
+            float br = GUILayout.HorizontalSlider(_brush.BrushRadius, _brush.MinRadius, _brush.MaxRadius);
+            if (!Mathf.Approximately(br, _brush.BrushRadius)) _brush.BrushRadius = br;
 
             GUILayout.Label($"已选 cell: {_selectedCount:N0}");
             GUILayout.BeginHorizontal();

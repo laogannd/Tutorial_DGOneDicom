@@ -59,6 +59,7 @@ namespace Dicom.Gene
             go.AddComponent<DicomRayManipulator>();
             // 画笔选择器 + 可视化(mode2);默认不启用,由面板开关
             var brush = go.AddComponent<GeneBrushSelector>();
+            brush.SetTagNameTable(_tagNameTable);
             go.AddComponent<GeneBrushVisual>();
 
             if (!string.IsNullOrEmpty(_defaultGene))

@@ -48,11 +48,9 @@ namespace Dicom.Gene
         [SerializeField] Button _clearButton;
         [SerializeField] Button _analyzeButton;
         [SerializeField] TextMeshProUGUI _selectionLabel;
-        // 深度切片:中心前后移动切片,厚度收窄穿透深度(0..1,1=全深度)
-        [SerializeField] Slider _depthCenterSlider;
-        [SerializeField] TextMeshProUGUI _depthCenterLabel;
-        [SerializeField] Slider _depthThicknessSlider;
-        [SerializeField] TextMeshProUGUI _depthThicknessLabel;
+        // 笔刷半径(世界米):球形笔刷伸进点云扫过染色的作用半径
+        [SerializeField] Slider _brushRadiusSlider;
+        [SerializeField] TextMeshProUGUI _brushRadiusLabel;
 
         [Header("区域结果")]
         [SerializeField] TextMeshProUGUI _regionNameLabel;
@@ -176,9 +174,8 @@ namespace Dicom.Gene
 
             if (_brush != null)
             {
-                ConfigSlider(_depthCenterSlider, 0f, 1f, _brush.DepthCenter, OnDepthCenterChanged);
-                ConfigSlider(_depthThicknessSlider, 0f, 1f, _brush.DepthThickness, OnDepthThicknessChanged);
-                RefreshDepthLabels();
+                ConfigSlider(_brushRadiusSlider, _brush.MinRadius, _brush.MaxRadius, _brush.BrushRadius, OnBrushRadiusChanged);
+                RefreshBrushRadiusLabel();
             }
 
             if (_resetTransformButton != null) _resetTransformButton.onClick.AddListener(OnResetTransform);
@@ -299,23 +296,16 @@ namespace Dicom.Gene
             RefreshRegionResult();
         }
 
-        void OnDepthCenterChanged(float v)
+        void OnBrushRadiusChanged(float v)
         {
-            if (_brush != null) _brush.DepthCenter = v;
-            RefreshDepthLabels();
+            if (_brush != null) _brush.BrushRadius = v;
+            RefreshBrushRadiusLabel();
         }
 
-        void OnDepthThicknessChanged(float v)
+        void RefreshBrushRadiusLabel()
         {
-            if (_brush != null) _brush.DepthThickness = v;
-            RefreshDepthLabels();
-        }
-
-        void RefreshDepthLabels()
-        {
-            if (_brush == null) return;
-            if (_depthCenterLabel != null) _depthCenterLabel.text = $"深度中心: {_brush.DepthCenter:F2}";
-            if (_depthThicknessLabel != null) _depthThicknessLabel.text = $"深度厚度: {_brush.DepthThickness:F2}";
+            if (_brush == null || _brushRadiusLabel == null) return;
+            _brushRadiusLabel.text = $"笔刷半径: {_brush.BrushRadius * 100f:F1} cm";
         }
 
         void OnSelectionChanged(int count)

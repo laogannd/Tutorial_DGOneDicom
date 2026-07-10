@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using Unity.Collections;
 using Unity.Jobs;
 using Unity.Mathematics;
@@ -8,73 +7,73 @@ using Autohand;
 
 namespace Dicom.Gene
 {
-    // 相机视角套索:手射线用于瞄准,命中点投到相机视口得 2D 光标,用户在视野里画闭合圈(等价屏幕圈选)
-    // 松开时以相机为锥顶把每个 cell 投到视口做多边形内点判定,并按深度切片收窄选区
-    // 激活信号 = 控制器 grip(GetTriggerAxis) 或 徒手捏合(拇指尖↔食指尖) 任一达标,两者并存
-    // 视口光标做 EMA 低通消抖(治乱飞);圈画在相机正前方固定距离,天然不被点云遮挡
-    // 画笔开启期间禁用抓取避免误抓;命中测试单次(松开那帧),绝不每帧重建
+    // 3D 球形空间画笔:手上握一个球形笔刷,伸进基因点云里扫过就染色选区
+    // 触发 = 徒手捏合(拇指尖↔食指尖合拢),滞回防抖;合拢才染色,松开即停,不是一直触发
+    // 球心取食指指尖(无则回退掌心),捏合期间每帧调度 GeneBrushJob 把半径内 cell 累积置位(OR)
+    // job 顺带归约:当前选中总数(仅变化才重建点集) + 球心最近命中 cell 的 tag(供空间显示所属部位)
+    // 画笔开启期间禁用抓取避免误抓
     [RequireComponent(typeof(GeneColorController))]
     public class GeneBrushSelector : MonoBehaviour
     {
-        // 控制器 grip 按下阈值,超过视为激活
-        [SerializeField] float _triggerThreshold = 0.5f;
         // 徒手捏合:拇指尖↔食指尖距离阈值,按两指尖半径和缩放;滞回防抖(enter 小于 exit)
         [SerializeField] float _pinchEnterScale = 1.6f;
         [SerializeField] float _pinchExitScale = 2.4f;
-        // 视口光标 EMA 平滑系数(0..1,越小越平滑越跟手弱);治手势追踪抖动
-        [SerializeField] float _smoothK = 0.35f;
-        // 采样节流:相邻视口光标距离超此值(视口单位 0..1)才记一点,防同点堆积
-        [SerializeField] float _sampleMinDist = 0.01f;
-        // 采样点上限,防长时间画圈溢出
-        [SerializeField] int _maxSamples = 256;
-        // 套索圈画在相机正前方的距离(米),仅影响可视化不影响命中
-        [SerializeField] float _lineDistance = 0.5f;
+        // 笔刷半径(世界米);默认 3cm,范围供 UI 滑条
+        [SerializeField] float _brushRadius = 0.03f;
+        [SerializeField] float _minRadius = 0.005f;
+        [SerializeField] float _maxRadius = 0.15f;
+
+        const int BlockSize = 4096;
 
         GeneColorController _controller;
         GeneGrabbableSetup _grabbable;
+        GeneTagNameTable _tagNameTable;
         Hand[] _hands;
         float _nextHandScan;
 
-        Camera _camera;
-
         // 每只手的捏合滞回状态(手实例->是否处于捏合中),避免边界抖动反复触发
-        readonly Dictionary<Hand, bool> _pinchState = new Dictionary<Hand, bool>();
+        readonly System.Collections.Generic.Dictionary<Hand, bool> _pinchState =
+            new System.Collections.Generic.Dictionary<Hand, bool>();
 
         bool _enabled;
 
-        // 深度切片:中心(0..1,0.5=模型中心)与厚度(0..1,1=全深度=兼容旧穿透)
-        float _depthCenter = 0.5f;
-        float _depthThickness = 1f;
+        // 笔刷世界球心(捏合激活时更新,供 visual 画指示球)
+        Vector3 _brushCenter;
+        bool _hasBrushCenter;
+        // 是否正在染色(捏合按住中)
+        bool _painting;
 
-        // 画圈状态:视口空间(0..1)采样点 + EMA 光标
-        bool _drawing;
-        float2 _smoothed;
-        bool _hasSmoothed;
-        readonly List<float2> _viewportSamples = new List<float2>(256);
-        // 供 visual 画线:视口采样反投到相机正前方固定距离的世界点,每帧重建随头动跟随
-        readonly List<Vector3> _trajectoryWorld = new List<Vector3>(256);
+        // 笔刷球心当前所属标记部位(半径内最近 cell 的 tag);无命中为 int.MinValue
+        int _currentTag = int.MinValue;
 
-        // 选中集变化(画圈/清除后触发),携带当前选中数;供 overlay 高亮与面板刷新
+        // 上次选中总数,用于判断本帧是否新增置位(仅新增才重建点集)
+        int _lastSelectedCount;
+
+        // 选中集变化(扫过染色/清除后触发),携带当前选中数;供 overlay 高亮与面板刷新
         public event Action<int> OnSelectionChanged;
 
         public bool BrushEnabled => _enabled;
         public int SelectedCount { get; private set; }
 
-        // 画圈中:供 visual 显示轨迹线
-        public bool Drawing => _drawing;
-        public IReadOnlyList<Vector3> TrajectoryWorld => _trajectoryWorld;
+        // 供 visual 显示笔刷指示球
+        public bool Painting => _painting;
+        public bool HasBrushCenter => _hasBrushCenter;
+        public Vector3 BrushCenterWorld => _brushCenter;
 
-        // 深度切片参数(面板绑定),clamp 到有效范围
-        public float DepthCenter
+        // 当前所属标记部位:是否命中、tag、名称、分类颜色(供空间文本/指示球)
+        public bool HasCurrentTag => _currentTag != int.MinValue;
+        public int CurrentTag => _currentTag;
+        public string CurrentTagName => ResolveTagName(_currentTag);
+        public Color CurrentTagColor => HasCurrentTag ? GeneTagPalette.Color(_currentTag) : UnityEngine.Color.white;
+
+        // 笔刷半径(世界米),clamp 到有效范围;供面板绑定
+        public float BrushRadius
         {
-            get => _depthCenter;
-            set => _depthCenter = Mathf.Clamp01(value);
+            get => _brushRadius;
+            set => _brushRadius = Mathf.Clamp(value, _minRadius, _maxRadius);
         }
-        public float DepthThickness
-        {
-            get => _depthThickness;
-            set => _depthThickness = Mathf.Clamp01(value);
-        }
+        public float MinRadius => _minRadius;
+        public float MaxRadius => _maxRadius;
 
         void Awake()
         {
@@ -82,13 +81,18 @@ namespace Dicom.Gene
             _grabbable = GetComponent<GeneGrabbableSetup>();
         }
 
-        // 开关画笔:开启时禁用抓取(防 grip 误抓),关闭时恢复并清画圈状态
+        // 注入 tag->名映射(由 Bootstrap 传入,可空则回退 "区域{tag}")
+        public void SetTagNameTable(GeneTagNameTable table) => _tagNameTable = table;
+
+        // 开关画笔:开启时禁用抓取(防 grip 误抓),关闭时恢复并清笔刷状态
         public void SetEnabled(bool on)
         {
             _enabled = on;
             SetGrabbableEnabled(!on);
             _pinchState.Clear();
-            EndDraw();
+            _painting = false;
+            _hasBrushCenter = false;
+            _currentTag = int.MinValue;
         }
 
         // 清空选择,回到全量渲染
@@ -96,6 +100,7 @@ namespace Dicom.Gene
         {
             _controller.ClearSelection();
             SelectedCount = 0;
+            _lastSelectedCount = 0;
             OnSelectionChanged?.Invoke(0);
         }
 
@@ -104,187 +109,99 @@ namespace Dicom.Gene
             if (!_enabled) return;
             if (_controller.Model == null || !_controller.Model.NativeReady) return;
 
-            var cam = GetCamera();
-            if (cam == null) return;
+            FindActiveHand(out bool active, out Vector3 center);
 
-            FindActiveHand(out bool active, out Vector3 origin, out Vector3 forward);
-
-            if (active)
+            _hasBrushCenter = active;
+            _painting = active;
+            if (!active)
             {
-                if (!_drawing) BeginDraw();
-                SampleDraw(cam, origin, forward);
-            }
-            else if (_drawing)
-            {
-                CommitLasso(cam);
-                EndDraw();
-            }
-        }
-
-        void BeginDraw()
-        {
-            _drawing = true;
-            _hasSmoothed = false;
-            _viewportSamples.Clear();
-            _trajectoryWorld.Clear();
-        }
-
-        void EndDraw()
-        {
-            _drawing = false;
-            _hasSmoothed = false;
-            _viewportSamples.Clear();
-            _trajectoryWorld.Clear();
-        }
-
-        // 采样:手射线与"面向相机、过模型中心"的平面求交得世界光标 -> 视口 -> EMA 平滑 -> 按距离节流
-        // 每帧重建轨迹世界点(反投到相机正前方固定距离),使圈随头动稳定显示在眼前
-        void SampleDraw(Camera cam, Vector3 origin, Vector3 forward)
-        {
-            if (!RayToViewPlane(cam, origin, forward, out float2 viewport)) return;
-
-            if (!_hasSmoothed)
-            {
-                _smoothed = viewport;
-                _hasSmoothed = true;
-            }
-            else
-            {
-                _smoothed = math.lerp(_smoothed, viewport, Mathf.Clamp01(_smoothK));
+                _currentTag = int.MinValue;
+                return;
             }
 
-            bool add = _viewportSamples.Count == 0;
-            if (!add && _viewportSamples.Count < _maxSamples)
-                add = math.distance(_smoothed, _viewportSamples[_viewportSamples.Count - 1]) >= _sampleMinDist;
-
-            if (add) _viewportSamples.Add(_smoothed);
-
-            RebuildTrajectory(cam);
+            _brushCenter = center;
+            PaintAt(center);
         }
 
-        // 手射线与过模型中心、法线朝相机的平面求交,命中点转视口(0..1)
-        bool RayToViewPlane(Camera cam, Vector3 origin, Vector3 forward, out float2 viewport)
+        // 球体扫过染色(分块并行):半径内 cell 累积置位;仅当新增了选中才重建点集与派发
+        // 同一 job 归约出当前所属 tag(最近命中 cell)供空间显示
+        void PaintAt(Vector3 centerWorld)
         {
-            viewport = default;
+            var mask = _controller.EnsureMask();
+            if (!mask.IsCreated) return;
 
-            Vector3 planePoint = transform.position;
-            Vector3 n = cam.transform.forward;
-            float denom = Vector3.Dot(forward, n);
-            // 射线与平面近平行:无稳定交点,跳过
-            if (Mathf.Abs(denom) < 1e-4f) return false;
+            int cellCount = _controller.Model.CellCount;
+            int blocks = (cellCount + BlockSize - 1) / BlockSize;
 
-            float t = Vector3.Dot(planePoint - origin, n) / denom;
-            // 交点在射线背后:跳过
-            if (t <= 0f) return false;
+            var blockSelected = new NativeArray<int>(blocks, Allocator.TempJob);
+            var blockNearestDistSq = new NativeArray<float>(blocks, Allocator.TempJob);
+            var blockNearestTag = new NativeArray<int>(blocks, Allocator.TempJob);
 
-            Vector3 world = origin + forward * t;
-            Vector3 vp = cam.WorldToViewportPoint(world);
-            // 相机背后:排除
-            if (vp.z <= 0f) return false;
-
-            viewport = new float2(vp.x, vp.y);
-            return true;
-        }
-
-        // 视口采样反投到相机正前方 _lineDistance 处的世界点,供 LineRenderer 画圈
-        void RebuildTrajectory(Camera cam)
-        {
-            _trajectoryWorld.Clear();
-            for (int i = 0; i < _viewportSamples.Count; i++)
-            {
-                float2 uv = _viewportSamples[i];
-                _trajectoryWorld.Add(cam.ViewportToWorldPoint(new Vector3(uv.x, uv.y, _lineDistance)));
-            }
-        }
-
-        // 松开:采样点 >=3 时以相机视口多边形 + 深度切片调度 Job 置位掩码(累积 OR)
-        void CommitLasso(Camera cam)
-        {
-            if (_viewportSamples.Count < 3) return;
-
-            float4x4 viewProj = math.mul((float4x4)cam.projectionMatrix, (float4x4)cam.worldToCameraMatrix);
-            float4x4 localToWorld = (float4x4)transform.localToWorldMatrix;
-
-            // 深度范围:模型局部包围盒 8 角投到视口取深度(clip.w)极值,按中心/厚度收窄
-            if (!ComputeDepthRange(viewProj, localToWorld, out float depthMin, out float depthMax)) return;
-
-            var polygon = new NativeArray<float2>(_viewportSamples.Count, Allocator.TempJob);
             try
             {
-                for (int i = 0; i < _viewportSamples.Count; i++) polygon[i] = _viewportSamples[i];
-
-                var mask = _controller.EnsureMask();
-                new GeneLassoJob
+                new GeneBrushJob
                 {
                     CellPos = _controller.Model.CellPos,
-                    LocalToWorld = localToWorld,
-                    ViewProj = viewProj,
-                    Polygon = polygon,
-                    DepthMin = depthMin,
-                    DepthMax = depthMax,
-                    Mask = mask
-                }.Schedule(_controller.Model.CellCount, 4096).Complete();
+                    CellTag = _controller.Model.CellTag,
+                    LocalToWorld = (float4x4)transform.localToWorldMatrix,
+                    BrushCenterWorld = centerWorld,
+                    RadiusSqWorld = _brushRadius * _brushRadius,
+                    BlockSize = BlockSize,
+                    CellCount = cellCount,
+                    Mask = mask,
+                    BlockSelected = blockSelected,
+                    BlockNearestDistSq = blockNearestDistSq,
+                    BlockNearestTag = blockNearestTag
+                }.Schedule(blocks, 1).Complete();
+
+                // 归约块级结果:总选中数 + 全局最近命中 tag
+                int count = 0;
+                float nearestDistSq = float.MaxValue;
+                int nearestTag = int.MinValue;
+                for (int b = 0; b < blocks; b++)
+                {
+                    count += blockSelected[b];
+                    if (blockNearestDistSq[b] < nearestDistSq)
+                    {
+                        nearestDistSq = blockNearestDistSq[b];
+                        nearestTag = blockNearestTag[b];
+                    }
+                }
+                _currentTag = nearestTag;
+
+                if (count == _lastSelectedCount) return;
+
+                _lastSelectedCount = count;
+                SelectedCount = count;
+                // 露出选区显色(重建点集),并派发供 overlay 高亮/面板刷新
+                _controller.ApplySelection();
+                OnSelectionChanged?.Invoke(count);
             }
             finally
             {
-                if (polygon.IsCreated) polygon.Dispose();
+                if (blockSelected.IsCreated) blockSelected.Dispose();
+                if (blockNearestDistSq.IsCreated) blockNearestDistSq.Dispose();
+                if (blockNearestTag.IsCreated) blockNearestTag.Dispose();
             }
-
-            RaiseSelectionChanged();
         }
 
-        // 模型局部包围盒 8 角变换到裁剪空间取 w(视深度)极值;按 _depthCenter/_depthThickness 收窄为切片
-        bool ComputeDepthRange(float4x4 viewProj, float4x4 localToWorld, out float depthMin, out float depthMax)
+        string ResolveTagName(int tag)
         {
-            depthMin = 0f;
-            depthMax = 0f;
-
-            Bounds b = _controller.LocalBounds;
-            Vector3 c = b.center;
-            Vector3 e = b.extents;
-
-            float lo = float.MaxValue;
-            float hi = float.MinValue;
-            for (int i = 0; i < 8; i++)
+            if (tag == int.MinValue) return "";
+            if (_tagNameTable != null)
             {
-                Vector3 corner = c + new Vector3(
-                    (i & 1) == 0 ? -e.x : e.x,
-                    (i & 2) == 0 ? -e.y : e.y,
-                    (i & 4) == 0 ? -e.z : e.z);
-                float4 world = math.mul(localToWorld, new float4((float3)corner, 1f));
-                float4 clip = math.mul(viewProj, world);
-                if (clip.w <= 1e-5f) continue;
-                lo = math.min(lo, clip.w);
-                hi = math.max(hi, clip.w);
+                string name = _tagNameTable.GetName(tag);
+                if (!string.IsNullOrEmpty(name)) return name;
             }
-            // 全部角在相机背后:无有效深度
-            if (lo > hi) return false;
-
-            float mid = math.lerp(lo, hi, _depthCenter);
-            float half = (hi - lo) * _depthThickness * 0.5f;
-            depthMin = mid - half;
-            depthMax = mid + half;
-            return true;
+            return $"区域{tag}";
         }
 
-        // 统计当前选中数并派发;画圈单次触发故频率低
-        void RaiseSelectionChanged()
-        {
-            var mask = _controller.EnsureMask();
-            int count = 0;
-            for (int i = 0; i < mask.Length; i++)
-                if (mask[i] != 0) count++;
-            SelectedCount = count;
-            OnSelectionChanged?.Invoke(count);
-        }
-
-        // 取激活手:grip 达标或徒手捏合任一即激活;射线原点=掌心,方向=掌心 forward
+        // 取激活手:徒手捏合(拇指+食指合拢)即激活;球心取食指指尖,无则回退掌心
         // IsPinching 每帧对每只手求值维持滞回状态,故遍历全部手不提前 return
-        void FindActiveHand(out bool active, out Vector3 origin, out Vector3 forward)
+        void FindActiveHand(out bool active, out Vector3 center)
         {
             active = false;
-            origin = Vector3.zero;
-            forward = Vector3.forward;
+            center = Vector3.zero;
             EnsureHands();
             if (_hands == null) return;
 
@@ -293,12 +210,11 @@ namespace Dicom.Gene
                 var h = _hands[i];
                 if (h == null) continue;
 
-                bool grip = h.GetTriggerAxis() >= _triggerThreshold;
                 bool pinch = IsPinching(h);
-                if ((grip || pinch) && !active)
+                if (pinch && !active)
                 {
                     active = true;
-                    PalmPose(h, out origin, out forward);
+                    center = BrushOrigin(h);
                 }
             }
         }
@@ -332,19 +248,16 @@ namespace Dicom.Gene
             return null;
         }
 
-        // 射线原点与朝向取掌心 transform;无 palm 回退手物体本身
-        void PalmPose(Hand h, out Vector3 origin, out Vector3 forward)
+        // 笔刷球心:捏合时取拇指尖与食指尖中点(合拢处),更符合"捏住画"的直觉;无指尖回退掌心
+        Vector3 BrushOrigin(Hand h)
         {
+            Finger index = FindFinger(h, FingerEnum.index);
+            Finger thumb = FindFinger(h, FingerEnum.thumb);
+            if (index != null && index.tip != null && thumb != null && thumb.tip != null)
+                return (index.tip.position + thumb.tip.position) * 0.5f;
+            if (index != null && index.tip != null) return index.tip.position;
             Transform t = h.palmTransform != null ? h.palmTransform : h.transform;
-            origin = t.position;
-            forward = t.forward;
-        }
-
-        // 主相机缓存,丢失时重取(不静默默认:取不到返回 null 由调用方跳过)
-        Camera GetCamera()
-        {
-            if (_camera == null) _camera = Camera.main;
-            return _camera;
+            return t.position;
         }
 
         void EnsureHands()
