@@ -48,6 +48,8 @@ namespace Dicom.Gene
             if (!_brush.BrushEnabled) return;
             EnsureOverlay();
             _controller.BuildOverlay(_overlay, 1f);
+            // 显色态改走每实例 property block,overlay 需复制主点云显色态才能用同一 colormap 高亮
+            _controller.ApplyColorState(_overlay);
         }
 
         void Update()
@@ -103,7 +105,8 @@ namespace Dicom.Gene
             go.transform.localScale = Vector3.one;
 
             _overlay = go.AddComponent<DicomPointCloud>();
-            // 复用主点云材质(共享 shader 全局显色);overlay 恒定强度=1 显示为 colormap 顶端色
+            // 复用主点云材质;显色态由 ApplyColorState 复制到 overlay 实例 property block
+            // overlay 恒定强度=1 显示为 colormap 顶端色
             if (_mainCloud != null && _mainCloud.Material != null)
                 _overlay.SetMaterial(_mainCloud.Material);
             _overlay.SetPointSize(_overlayPointSize);

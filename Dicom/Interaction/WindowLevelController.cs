@@ -14,12 +14,14 @@ namespace Dicom.Interaction
         [SerializeField] float _thresholdMin = 200f;
         [SerializeField] float _thresholdMax = 3000f;
 
-        static readonly int _WindowId = Shader.PropertyToID("_DicomWindow");
+        // 显色改走点云实例后 ApplyWindow 需要 controller 转发;运行时动态挂载(bootstrap)不经 Inspector 赋值,
+        // 这里自动取同物体上的 PointCloudController
+        void Awake()
+        {
+            if (_controller == null) _controller = GetComponent<PointCloudController>();
+        }
 
         void OnEnable() => ApplyWindow();
-
-        // 停用/销毁时把全局窗宽窗位复位为全通,防止 Domain/Scene Reload 禁用下的跨会话残留
-        void OnDisable() => Shader.SetGlobalVector(_WindowId, new Vector4(0.5f, 1f, 0f, 0f));
 
         // 窗宽窗位作用于 0..1 归一化强度，shader 端做映射，零 CPU 重算
         public void SetWindow(float center, float width)
@@ -29,7 +31,11 @@ namespace Dicom.Interaction
             ApplyWindow();
         }
 
-        void ApplyWindow() => Shader.SetGlobalVector(_WindowId, new Vector4(_windowCenter, _windowWidth, 0f, 0f));
+        // 窗宽窗位写入本 DICOM 点云实例 property block(经 controller 转发),与基因点云互不干扰
+        void ApplyWindow()
+        {
+            if (_controller != null) _controller.SetWindow(_windowCenter, _windowWidth);
+        }
 
         // 阈值改变需要重新过滤体素，开销大，仅在用户确认调节后调用
         public void SetThreshold(float min, float max)

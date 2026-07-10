@@ -85,8 +85,6 @@ namespace Dicom.Demo
         // 折叠展开状态,一次性建好避免 OnGUI 内 GC
         readonly Dictionary<string, bool> _folds = new Dictionary<string, bool>();
 
-        static readonly int _TintId = Shader.PropertyToID("_DicomTint");
-
         // === Bootstrap 反射绑定入口 ===
         // DICOM Bootstrap 调用,绑定并把面板切到 DICOM 标签
         public void BindDicom(PointCloudController controller, DicomPointCloud pointCloud,
@@ -764,6 +762,10 @@ namespace Dicom.Demo
             GUI.color = prev;
         }
 
-        void ApplyTint() => Shader.SetGlobalVector(_TintId, new Vector4(_tintR, _tintG, _tintB, _gain));
+        // 色调/增益写入 DICOM 点云实例 property block,不影响基因点云
+        void ApplyTint()
+        {
+            if (_dicomPointCloud != null) _dicomPointCloud.SetTint(_tintR, _tintG, _tintB, _gain);
+        }
     }
 }

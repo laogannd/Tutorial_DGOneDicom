@@ -96,13 +96,6 @@ namespace Dicom.PointCloud
         public DicomLutProfile LutProfile => _lutProfile;
         public DicomBreakpointProfile BreakpointProfile => _breakpointProfile;
 
-        static readonly int _ColorModeId = Shader.PropertyToID("_DicomColorMode");
-        static readonly int _ClassColorsId = Shader.PropertyToID("_DicomClassColors");
-        static readonly int _LutTexId = Shader.PropertyToID("_DicomLut");
-        static readonly int _BreakpointTexId = Shader.PropertyToID("_DicomBreakpointLut");
-        static readonly int _BreakpointDomainId = Shader.PropertyToID("_DicomBreakpointDomain");
-        static readonly int _NormalizeId = Shader.PropertyToID("_DicomNormalize");
-
         void Awake()
         {
             _pointCloud = GetComponent<DicomPointCloud>();
@@ -378,10 +371,10 @@ namespace Dicom.PointCloud
             if (_dataset != null) BuildPoints(_dataset);
         }
 
-        // 切换显色模式：纯 shader 全局变量，零重建。LUT 模式需先绑定 _lutProfile
+        // 切换显色模式：写入本点云实例 property block，零重建。LUT 模式需先绑定 _lutProfile
         public void SetColorMode(DicomColorMode mode)
         {
-            Shader.SetGlobalFloat(_ColorModeId, (float)mode);
+            _pointCloud.SetColorMode((float)mode);
         }
 
         // 兼容旧调用：true=分类调色板，false=灰度强度
@@ -441,33 +434,44 @@ namespace Dicom.PointCloud
             return true;
         }
 
-        // 调色板上传 shader 全局数组，类别顺序与 profile 一致
+        // 窗宽窗位写入本点云实例 property block(供 WindowLevelController 转发),零 CPU 重算
+        public void SetWindow(float center, float width)
+        {
+            _pointCloud.SetWindow(center, width);
+        }
+
+        // 色调/增益写入本点云实例 property block(供面板转发)
+        public void SetTint(float r, float g, float b, float gain)
+        {
+            _pointCloud.SetTint(r, g, b, gain);
+        }
+
+        // 调色板写入本点云实例 property block，类别顺序与 profile 一致
         void ApplyPalette()
         {
             if (_classificationProfile == null) return;
-            Shader.SetGlobalVectorArray(_ClassColorsId, _classificationProfile.GetPalette());
+            _pointCloud.SetClassColors(_classificationProfile.GetPalette());
         }
 
-        // 烘焙离散 LUT 并上传 shader 全局纹理，供 LUT 显色模式采样
+        // 烘焙离散 LUT 并写入本点云实例 property block，供 LUT 显色模式采样
         void ApplyLut()
         {
             if (_lutProfile == null) return;
-            Shader.SetGlobalTexture(_LutTexId, _lutProfile.BakeLut());
+            _pointCloud.SetLutTexture(_lutProfile.BakeLut());
         }
 
-        // 烘焙断点色带并上传 shader 全局纹理与值域，供断点显色模式采样
+        // 烘焙断点色带并写入本点云实例 property block 与值域，供断点显色模式采样
         void ApplyBreakpointLut()
         {
             if (_breakpointProfile == null) return;
-            Shader.SetGlobalTexture(_BreakpointTexId, _breakpointProfile.BakeLut());
-            Shader.SetGlobalVector(_BreakpointDomainId,
-                new Vector4(_breakpointProfile.DomainMin, _breakpointProfile.DomainMax, 0f, 0f));
+            _pointCloud.SetBreakpointTexture(_breakpointProfile.BakeLut());
+            _pointCloud.SetBreakpointDomain(_breakpointProfile.DomainMin, _breakpointProfile.DomainMax);
         }
 
-        // 上传归一化范围,供断点模式 shader 端把 intensity 反推为真实值
+        // 写入归一化范围,供断点模式 shader 端把 intensity 反推为真实值
         void ApplyNormalize()
         {
-            Shader.SetGlobalVector(_NormalizeId, new Vector4(_normalizeMin, _normalizeMax, 0f, 0f));
+            _pointCloud.SetNormalize(_normalizeMin, _normalizeMax);
         }
 
         // 从 profile 导出区间表为 NativeArray，无 profile 时返回零长数组

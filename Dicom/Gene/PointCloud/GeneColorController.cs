@@ -56,12 +56,6 @@ namespace Dicom.Gene
         readonly DicomLoadReport _report = new DicomLoadReport();
         readonly Stopwatch _loadTimer = new Stopwatch();
 
-        static readonly int _ColorModeId = Shader.PropertyToID("_DicomColorMode");
-        static readonly int _LutTexId = Shader.PropertyToID("_DicomLut");
-        static readonly int _NormalizeId = Shader.PropertyToID("_DicomNormalize");
-        static readonly int _TintId = Shader.PropertyToID("_DicomTint");
-        static readonly int _WindowId = Shader.PropertyToID("_DicomWindow");
-
         public GeneModelData Model => _model;
         public GeneExpression CurrentGene => _currentGene;
         public string CurrentGeneName => _currentGene != null ? _currentGene.GeneName : "";
@@ -447,11 +441,12 @@ namespace Dicom.Gene
         }
 
         // === 显色 ===
+        // 全部写入本点云实例 property block,与 DICOM HU 点云的显色态互不干扰(不走 Shader 全局)
         void ApplyLut()
         {
             if (_lutProfile == null) return;
-            Shader.SetGlobalTexture(_LutTexId, _lutProfile.BakeLut());
-            Shader.SetGlobalFloat(_ColorModeId, (float)DicomColorMode.Lut);
+            _pointCloud.SetLutTexture(_lutProfile.BakeLut());
+            _pointCloud.SetColorMode((float)DicomColorMode.Lut);
         }
 
         // 运行时更换 LUT,重新烘焙上传。传入资产则实例化副本持有,并回收旧副本纹理
@@ -464,15 +459,22 @@ namespace Dicom.Gene
 
         void ApplyNormalize(float min, float max)
         {
-            Shader.SetGlobalVector(_NormalizeId, new Vector4(min, max, 0f, 0f));
+            _pointCloud.SetNormalize(min, max);
         }
 
-        // 复位 shader 全局显色态:LUT 模式 + 窗宽窗位全通 + 白色调,消除跨 PlayMode 残留
+        // 初始化本点云实例显色态:LUT 模式 + 窗宽窗位全通 + 白色调
+        // 显色态挂在实例 property block 上,不再是 Shader 全局,天然无跨 PlayMode 残留问题
         void ResetShaderGlobals()
         {
-            Shader.SetGlobalFloat(_ColorModeId, (float)DicomColorMode.Lut);
-            Shader.SetGlobalVector(_WindowId, new Vector4(0.5f, 1f, 0f, 0f));
-            Shader.SetGlobalVector(_TintId, new Vector4(1f, 1f, 1f, 1f));
+            _pointCloud.SetColorMode((float)DicomColorMode.Lut);
+            _pointCloud.SetWindow(0.5f, 1f);
+            _pointCloud.SetTint(1f, 1f, 1f, 1f);
+        }
+
+        // 把本点云当前显色态复制到 overlay 点云,使高亮点用与主点云一致的 colormap
+        public void ApplyColorState(DicomPointCloud target)
+        {
+            _pointCloud.CopyColorStateTo(target);
         }
 
         void RaiseReport() => OnReportChanged?.Invoke(_report);

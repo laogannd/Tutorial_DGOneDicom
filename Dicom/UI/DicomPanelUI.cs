@@ -106,8 +106,6 @@ namespace Dicom.UI
         float _autoBindElapsed;
         float _autoBindNextRetry;
 
-        static readonly int _TintId = Shader.PropertyToID("_DicomTint");
-
         void Start()
         {
             // 统一字体放最前,后续动态刷新的标签文本也沿用工厂创建时的字体
@@ -658,6 +656,10 @@ namespace Dicom.UI
             }
         }
 
-        void ApplyTint() => Shader.SetGlobalVector(_TintId, new Vector4(_tintR, _tintG, _tintB, _gain));
+        // 色调/增益写入本 DICOM 点云实例 property block,不影响基因点云
+        void ApplyTint()
+        {
+            if (_pointCloud != null) _pointCloud.SetTint(_tintR, _tintG, _tintB, _gain);
+        }
     }
 }
