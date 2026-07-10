@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+using System.Text;
 using TMPro;
 using UnityEngine;
 
@@ -6,10 +8,11 @@ using Dicom.PointCloud;
 namespace Dicom.Gene
 {
     // 笔刷可视化:
-    // 1) 半透明球体指示器跟随笔刷球心,直径=笔刷直径,颜色随当前所属标记部位(捏合时更实,悬停淡)
-    // 2) 球上方世界空间 TMP 文本显示所属部位名,始终朝向相机(billboard),文字用部位同色
-    // 3) 选中 overlay 高亮点云(第二 DicomPointCloud,identity 子物体,与主点云同 local->world)
-    // overlay 仅在选中集变化时重建一次,不每帧重建 136k 点
+    // 1) 半透明球体指示器跟随笔刷球心(手上),颜色随最近所属部位(捏合时更实,悬停淡)
+    // 2) 悬停在选中区域质心上方的世界空间 TMP 文本,列出区域内全部 tag(主导优先+占比),
+    //    每个 tag 用其分类色;一条 LineRenderer 指向线连到质心。勾画中实时刷新
+    // 3) 选区显色:选了具体基因则清 overlay,让主点云基因表达 LUT 真实配色透出;
+    //    未选基因(无表达值可映射)才用第二 DicomPointCloud 恒定强度高亮
     [RequireComponent(typeof(GeneBrushSelector))]
     public class GeneBrushVisual : MonoBehaviour
     {
@@ -17,11 +20,13 @@ namespace Dicom.Gene
         [SerializeField] float _sphereAlpha = 0.35f;
         // overlay 高亮点用 colormap 顶端强度显示(1=最亮),点比主点云略大更醒目
         [SerializeField] float _overlayPointSize = 0.004f;
-        // 文本相对球心上方偏移(米,取球半径倍数,故随半径缩放)
-        [SerializeField] float _labelHeightScale = 1.4f;
+        // 文本相对质心上方偏移(米)
+        [SerializeField] float _labelHeight = 0.08f;
         // 文本世界字号(米级世界文本,配合小 localScale)
         [SerializeField] float _labelFontSize = 4f;
         [SerializeField] float _labelScale = 0.01f;
+        // 指向线宽(世界米)
+        [SerializeField] float _lineWidth = 0.002f;
 
         GeneBrushSelector _brush;
         GeneColorController _controller;
@@ -33,9 +38,18 @@ namespace Dicom.Gene
         Transform _label;
         TextMeshPro _labelText;
 
-        Camera _camera;
+        LineRenderer _line;
+        Material _lineMaterial;
 
+        Camera _camera;
         DicomPointCloud _overlay;
+        readonly StringBuilder _sb = new StringBuilder(256);
+
+        // 当前区域:是否有内容、质心世界坐标、文本世界坐标、主导色(供每帧 billboard/指向线)
+        bool _hasRegion;
+        Vector3 _regionCentroidWorld;
+        Vector3 _regionLabelWorld;
+        Color _dominantColor = Color.white;
 
         static readonly int _BaseColorId = Shader.PropertyToID("_BaseColor");
         static readonly int _ZTestId = Shader.PropertyToID("_ZTest");
@@ -51,79 +65,134 @@ namespace Dicom.Gene
         void OnDestroy()
         {
             if (_brush != null) _brush.OnSelectionChanged -= OnSelectionChanged;
-            // 指示球/文本是场景根物体(非子物体),须显式销毁避免残留
+            // 指示球/文本/指向线是场景根物体(非子物体),须显式销毁避免残留
             if (_sphere != null) Destroy(_sphere.gameObject);
             if (_label != null) Destroy(_label.gameObject);
+            if (_line != null) Destroy(_line.gameObject);
             if (_sphereMaterial != null) Destroy(_sphereMaterial);
+            if (_lineMaterial != null) Destroy(_lineMaterial);
         }
 
-        // 选中集变化后重建 overlay 高亮(单次触发,频率低)
-        // overlay 仅作画笔期实时反馈;画笔关闭后由 Update 清空,避免恒定强度盖住区域表达显色
+        // 选中集变化后:选了基因清 overlay(主点云表达色透出),未选基因才恒定高亮;并刷新区域文本
         void OnSelectionChanged(int count)
         {
             if (!_brush.BrushEnabled) return;
-            EnsureOverlay();
-            _controller.BuildOverlay(_overlay, 1f);
-            // 显色态改走每实例 property block,overlay 需复制主点云显色态才能用同一 colormap 高亮
-            _controller.ApplyColorState(_overlay);
+
+            if (_controller.CurrentGene != null)
+            {
+                // 已有表达值:主点云 RebuildPoints 已用真实 LUT 表达色渲染选中 cell,overlay 会盖掉,故清空
+                if (_overlay != null && _overlay.PointCount > 0) _overlay.SetPoints(default, 0);
+            }
+            else
+            {
+                // 无基因可映射:用 overlay 恒定强度高亮选区作反馈
+                EnsureOverlay();
+                _controller.BuildOverlay(_overlay, 1f);
+                _controller.ApplyColorState(_overlay);
+            }
+
+            RefreshRegionLabel();
         }
 
         void Update()
         {
             if (!_brush.BrushEnabled)
             {
-                SetActive(false);
-                // 画笔关闭:清空 overlay 让主点云区域表达显色可见
-                if (_overlay != null && _overlay.PointCount > 0)
-                    _overlay.SetPoints(default, 0);
+                SetSphereActive(false);
+                HideRegion();
+                if (_overlay != null && _overlay.PointCount > 0) _overlay.SetPoints(default, 0);
                 return;
             }
 
-            UpdateBrushGizmo();
+            UpdateBrushCursor();
+            // 质心固定,但相机会动:每帧让区域文本朝相机
+            if (_hasRegion) BillboardRegionLabel();
         }
 
-        // 有笔刷球心时显示指示球+文本:球跟随球心直径=2*半径,颜色随所属部位;文本显示部位名并 billboard
-        void UpdateBrushGizmo()
+        // 指示球跟随笔刷球心:直径=2*半径,颜色随最近所属部位;染色中更实,悬停淡
+        void UpdateBrushCursor()
         {
             bool show = _brush.HasBrushCenter;
             EnsureSphere();
-            EnsureLabel();
-            SetActive(show);
+            SetSphereActive(show);
             if (!show) return;
 
-            Color tagColor = _brush.CurrentTagColor;
-
             _sphere.position = _brush.BrushCenterWorld;
-            // 指示球是场景根物体,localScale 即世界尺寸
             _sphere.localScale = Vector3.one * (_brush.BrushRadius * 2f);
 
             if (_sphereMaterial != null && _sphereMaterial.HasProperty(_BaseColorId))
             {
-                Color c = tagColor;
-                // 染色中更实,悬停(未捏合)淡一半
+                Color c = _brush.CurrentTagColor;
                 c.a = _brush.Painting ? _sphereAlpha : _sphereAlpha * 0.5f;
                 _sphereMaterial.SetColor(_BaseColorId, c);
             }
-
-            // 文本:球上方,内容=所属部位名(无命中留空),颜色=部位色,billboard 朝相机
-            if (_labelText != null)
-            {
-                string name = _brush.HasCurrentTag ? _brush.CurrentTagName : "";
-                if (_labelText.text != name) _labelText.text = name;
-                _labelText.color = tagColor;
-
-                _label.gameObject.SetActive(!string.IsNullOrEmpty(name));
-                if (!string.IsNullOrEmpty(name))
-                {
-                    _label.position = _brush.BrushCenterWorld + Vector3.up * (_brush.BrushRadius * _labelHeightScale);
-                    var cam = GetCamera();
-                    if (cam != null)
-                        _label.rotation = Quaternion.LookRotation(_label.position - cam.transform.position, Vector3.up);
-                }
-            }
         }
 
-        // overlay 点云挂在子物体,identity 局部变换 -> 与主点云同一 local->world,cell local 坐标直接对齐
+        // 汇总选中区域全部 tag(主导优先+占比)刷新空间文本,指向线连质心;无选中隐藏
+        void RefreshRegionLabel()
+        {
+            EnsureLabel();
+            EnsureLine();
+
+            if (!_controller.CollectRegionSummary(out var shares, out Vector3 localCentroid, out int total)
+                || total == 0)
+            {
+                HideRegion();
+                return;
+            }
+
+            _dominantColor = GeneTagPalette.Color(shares[0].Tag);
+            // local 质心 -> world(模型缩放/旋转经 transform)
+            _regionCentroidWorld = transform.TransformPoint(localCentroid);
+            _regionLabelWorld = _regionCentroidWorld + Vector3.up * _labelHeight;
+            _hasRegion = true;
+
+            _labelText.text = BuildLabelText(shares, total);
+            _label.gameObject.SetActive(true);
+            _label.position = _regionLabelWorld;
+            BillboardRegionLabel();
+
+            _line.gameObject.SetActive(true);
+            _line.SetPosition(0, _regionLabelWorld);
+            _line.SetPosition(1, _regionCentroidWorld);
+            _line.startColor = _line.endColor = _dominantColor;
+        }
+
+        // 富文本:第一行主导区域(加粗),其余按占比降序;每个 tag 名用其分类色,尾随百分比
+        string BuildLabelText(List<GeneColorController.TagShare> shares, int total)
+        {
+            _sb.Clear();
+            for (int i = 0; i < shares.Count; i++)
+            {
+                int tag = shares[i].Tag;
+                float pct = shares[i].Count * 100f / total;
+                string hex = ColorUtility.ToHtmlStringRGB(GeneTagPalette.Color(tag));
+                string name = _brush.GetTagName(tag);
+                if (i > 0) _sb.Append('\n');
+                _sb.Append("<color=#").Append(hex).Append('>');
+                if (i == 0) _sb.Append("<b>").Append(name).Append("</b>");
+                else _sb.Append(name);
+                _sb.Append(' ').Append(pct.ToString("F0")).Append('%').Append("</color>");
+            }
+            return _sb.ToString();
+        }
+
+        // 文本朝相机(billboard),质心不变故位置沿用缓存
+        void BillboardRegionLabel()
+        {
+            var cam = GetCamera();
+            if (cam == null || _label == null) return;
+            _label.rotation = Quaternion.LookRotation(_regionLabelWorld - cam.transform.position, Vector3.up);
+        }
+
+        void HideRegion()
+        {
+            _hasRegion = false;
+            if (_label != null && _label.gameObject.activeSelf) _label.gameObject.SetActive(false);
+            if (_line != null && _line.gameObject.activeSelf) _line.gameObject.SetActive(false);
+        }
+
+        // overlay 点云挂子物体,identity 局部变换 -> 与主点云同一 local->world,cell local 坐标直接对齐
         void EnsureOverlay()
         {
             if (_overlay != null) return;
@@ -135,14 +204,12 @@ namespace Dicom.Gene
             go.transform.localScale = Vector3.one;
 
             _overlay = go.AddComponent<DicomPointCloud>();
-            // 复用主点云材质;显色态由 ApplyColorState 复制到 overlay 实例 property block
-            // overlay 恒定强度=1 显示为 colormap 顶端色
             if (_mainCloud != null && _mainCloud.Material != null)
                 _overlay.SetMaterial(_mainCloud.Material);
             _overlay.SetPointSize(_overlayPointSize);
         }
 
-        // 指示球:内置 Sphere primitive,去掉碰撞体,场景根物体(不随点云缩放),半透明置顶材质
+        // 指示球:内置 Sphere primitive,去碰撞体,场景根物体(不随点云缩放),半透明置顶材质
         void EnsureSphere()
         {
             if (_sphere != null) return;
@@ -152,7 +219,6 @@ namespace Dicom.Gene
             go.name = "GeneBrushSphere";
             var col = go.GetComponent<Collider>();
             if (col != null) Destroy(col);
-            // 世界空间跟随:不作为点云子物体,避免继承点云缩放
             _sphere = go.transform;
 
             var mr = go.GetComponent<MeshRenderer>();
@@ -165,12 +231,12 @@ namespace Dicom.Gene
             go.SetActive(false);
         }
 
-        // 空间文本:世界空间 TextMeshPro(MeshRenderer 版),置顶不被点云遮挡,居中
+        // 区域空间文本:世界空间 TextMeshPro(MeshRenderer 版),置顶不被点云遮挡,居中
         void EnsureLabel()
         {
             if (_label != null) return;
 
-            var go = new GameObject("GeneBrushLabel");
+            var go = new GameObject("GeneRegionLabel");
             _label = go.transform;
             _label.localScale = Vector3.one * _labelScale;
 
@@ -178,24 +244,38 @@ namespace Dicom.Gene
             _labelText.alignment = TextAlignmentOptions.Center;
             _labelText.fontSize = _labelFontSize;
             _labelText.enableWordWrapping = false;
+            _labelText.richText = true;
             _labelText.color = Color.white;
-            // 置顶:文字始终可见不被点云遮挡
             if (_labelText.fontMaterial != null && _labelText.fontMaterial.HasProperty(_ZTestId))
                 _labelText.fontMaterial.SetInt(_ZTestId, (int)UnityEngine.Rendering.CompareFunction.Always);
 
-            var rt = _labelText.rectTransform;
-            rt.sizeDelta = new Vector2(20f, 4f);
-
+            _labelText.rectTransform.sizeDelta = new Vector2(24f, 12f);
             go.SetActive(false);
         }
 
-        void SetActive(bool active)
+        // 指向线:两点 LineRenderer,世界空间,置顶,主导色;连文本与区域质心
+        void EnsureLine()
+        {
+            if (_line != null) return;
+            if (_lineMaterial == null) _lineMaterial = CreateLineMaterial();
+
+            var go = new GameObject("GeneRegionLeader");
+            _line = go.AddComponent<LineRenderer>();
+            _line.useWorldSpace = true;
+            _line.positionCount = 2;
+            _line.numCapVertices = 2;
+            _line.widthMultiplier = _lineWidth;
+            _line.sharedMaterial = _lineMaterial;
+            _line.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            _line.receiveShadows = false;
+            _line.alignment = LineAlignment.View;
+            go.SetActive(false);
+        }
+
+        void SetSphereActive(bool active)
         {
             if (_sphere != null && _sphere.gameObject.activeSelf != active)
                 _sphere.gameObject.SetActive(active);
-            // 文本额外受"有无部位名"控制,关闭画笔时一并隐藏
-            if (!active && _label != null && _label.gameObject.activeSelf)
-                _label.gameObject.SetActive(false);
         }
 
         Camera GetCamera()
@@ -222,6 +302,24 @@ namespace Dicom.Gene
 
             Debug.LogWarning("笔刷指示球所需 shader 均被剥离(建议加入 Always Included Shaders)");
             return null;
+        }
+
+        // 指向线材质:URP Unlit 顶点色置顶;LineRenderer 用 startColor/endColor 着色
+        static Material CreateLineMaterial()
+        {
+            var urp = Shader.Find("Universal Render Pipeline/Unlit");
+            Shader s = urp != null ? urp : Shader.Find("Sprites/Default");
+            if (s == null)
+            {
+                Debug.LogWarning("指向线所需 shader 被剥离(建议加入 Always Included Shaders)");
+                return null;
+            }
+            var mat = new Material(s);
+            MakeTransparent(mat);
+            // 置顶,不被点云遮挡
+            if (mat.HasProperty(_ZTestId))
+                mat.SetInt(_ZTestId, (int)UnityEngine.Rendering.CompareFunction.Always);
+            return mat;
         }
 
         // URP Unlit 透明模式:开启混合,写深度关闭,放到透明队列

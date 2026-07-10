@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
@@ -370,6 +371,44 @@ namespace Dicom.Gene
                 tags[w] = _model.CellTag[i];
                 w++;
             }
+            return true;
+        }
+
+        // 区域汇总:选中掩码内各 tag 的置位数(降序)+ 选中 cell 的 local 质心
+        // 供空间文本列出"区域内全部 tag(主导优先)",指向线连到质心。缓冲区复用防 GC
+        // tag 数很少(数十),字典计数 O(CellCount) 单遍;仅选中集变化时调用,非每帧
+        readonly Dictionary<int, int> _tagCountBuf = new Dictionary<int, int>();
+        readonly List<TagShare> _tagShareBuf = new List<TagShare>();
+        static readonly Comparison<TagShare> _tagShareDesc = (a, b) => b.Count.CompareTo(a.Count);
+
+        public struct TagShare { public int Tag; public int Count; }
+
+        // 返回按占比降序的 tag 列表(引用内部复用缓冲,勿缓存)与 local 质心;无选中返回 false
+        public bool CollectRegionSummary(out List<TagShare> shares, out Vector3 localCentroid, out int total)
+        {
+            shares = _tagShareBuf;
+            shares.Clear();
+            _tagCountBuf.Clear();
+            localCentroid = Vector3.zero;
+            total = 0;
+            if (!_mask.IsCreated || _model == null || !_model.NativeReady) return false;
+
+            float3 sum = float3.zero;
+            for (int i = 0; i < _mask.Length; i++)
+            {
+                if (_mask[i] == 0) continue;
+                int t = _model.CellTag[i];
+                _tagCountBuf.TryGetValue(t, out int c);
+                _tagCountBuf[t] = c + 1;
+                sum += _model.CellPos[i];
+                total++;
+            }
+            if (total == 0) return false;
+
+            localCentroid = (Vector3)(sum / total);
+            foreach (var kv in _tagCountBuf)
+                shares.Add(new TagShare { Tag = kv.Key, Count = kv.Value });
+            shares.Sort(_tagShareDesc);
             return true;
         }
 

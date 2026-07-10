@@ -185,6 +185,9 @@ namespace Dicom.Gene
             }
         }
 
+        // 供 visual 解析任意 tag 的人类可读名(区域空间文本用)
+        public string GetTagName(int tag) => ResolveTagName(tag);
+
         string ResolveTagName(int tag)
         {
             if (tag == int.MinValue) return "";
