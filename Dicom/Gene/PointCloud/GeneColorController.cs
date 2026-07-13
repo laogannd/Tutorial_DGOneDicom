@@ -26,6 +26,9 @@ namespace Dicom.Gene
         // 基因表达 colormap 配置,未绑定则显色落回灰度
         [SerializeField] DicomLutProfile _lutProfile;
 
+        // 有选区时未选中 cell 的淡显不透明度(0=全透明,1=不透明);由 Bootstrap 注入,面板可实时调
+        [SerializeField, Range(0f, 1f)] float _selectionFade = 0.25f;
+
         // 加载完成(携带 local 尺寸信息)
         public event Action<GeneModelData> OnLoaded;
         // 每次重建点集后触发,携带可见点局部 AABB,供碰撞盒/线框紧贴
@@ -64,6 +67,17 @@ namespace Dicom.Gene
         public Bounds LocalBounds => _localBounds;
         public DicomLutProfile LutProfile => _lutProfile;
         public bool HasSelection => _mask.IsCreated;
+
+        // 未选中 cell 淡显不透明度;setter 立即刷新当前点云 alpha(仅在有选区时可见)
+        public float SelectionFade
+        {
+            get => _selectionFade;
+            set
+            {
+                _selectionFade = Mathf.Clamp01(value);
+                if (_mask.IsCreated) _pointCloud.SetAlpha(_selectionFade);
+            }
+        }
         // 加载完成后可用,供面板列基因菜单
         public string ExpressionDir => _exprDir;
 
@@ -290,6 +304,8 @@ namespace Dicom.Gene
                 writeJob.Schedule(blocks, 1).Complete();
 
                 _pointCloud.SetPoints(points, total);
+                // 有选区:未选中 cell 淡显;无选区:全部不透明
+                _pointCloud.SetAlpha(_mask.IsCreated ? _selectionFade : 1f);
 
                 float3 lo = new float3(float.MaxValue);
                 float3 hi = new float3(float.MinValue);

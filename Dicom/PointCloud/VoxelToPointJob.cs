@@ -6,13 +6,15 @@ using Unity.Mathematics;
 
 namespace Dicom.PointCloud
 {
-    // GPU 点结构，与 shader StructuredBuffer 布局一致：12B 位置 + 4B 强度 + 4B 类别 = 20B
+    // GPU 点结构，与 shader StructuredBuffer 布局一致：12B 位置 + 4B 强度 + 4B 类别 + 4B 选中 = 24B
     public struct DicomPoint
     {
         public float3 Position;
         public float Intensity;
         // 组织分类索引，由 DicomClassificationProfile 区间表查得；-1 表示未分类
         public float ClassId;
+        // 选中标志：1=不透明(选中/常规), 0=按 _DicomAlpha 半透明淡显。DICOM 恒为 1,基因按掩码
+        public float Selected;
     }
 
     // 两遍式体素转点，仅用核心 NativeArray，无 com.unity.collections 依赖
@@ -107,7 +109,8 @@ namespace Dicom.PointCloud
                 float intensity = (real - NormalizeMin) / denom;
                 float classId = ResolveClass(real, classCount);
 
-                Points[write++] = new DicomPoint { Position = pos, Intensity = intensity, ClassId = classId };
+                // DICOM 点恒不透明
+                Points[write++] = new DicomPoint { Position = pos, Intensity = intensity, ClassId = classId, Selected = 1f };
 
                 // 累积本切片可见点的真实 AABB,坐标已经过 RemapAxis,故与重建方向一致
                 lo = math.min(lo, pos);

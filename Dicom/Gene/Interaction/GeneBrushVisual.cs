@@ -45,6 +45,9 @@ namespace Dicom.Gene
         DicomPointCloud _overlay;
         readonly StringBuilder _sb = new StringBuilder(256);
 
+        // 区域文本字体:由 Bootstrap/面板注入(项目中文字体);为空则运行时回退解析
+        TMP_FontAsset _injectedFont;
+
         // 当前区域:是否有内容、质心世界坐标、文本世界坐标、主导色(供每帧 billboard/指向线)
         bool _hasRegion;
         Vector3 _regionCentroidWorld;
@@ -52,7 +55,13 @@ namespace Dicom.Gene
         Color _dominantColor = Color.white;
 
         static readonly int _BaseColorId = Shader.PropertyToID("_BaseColor");
+        // URP Unlit(球/线)用 _ZTest;TMP SDF 的 ZTest 绑定全局变量 unity_GUIZTestMode,
+        // 材质实例写此属性即可覆盖为 Always 置顶,故两者用不同 id
         static readonly int _ZTestId = Shader.PropertyToID("_ZTest");
+        static readonly int _TmpZTestId = Shader.PropertyToID("unity_GUIZTestMode");
+
+        // 注入区域文本字体(项目中文字体);须在 EnsureLabel 建文本前调用才生效
+        public void SetFont(TMP_FontAsset font) => _injectedFont = font;
 
         void Awake()
         {
@@ -241,13 +250,19 @@ namespace Dicom.Gene
             _label.localScale = Vector3.one * _labelScale;
 
             _labelText = go.AddComponent<TextMeshPro>();
+            // 区域名含中文,须用含中文字形的字体,否则渲染空白(看似"没出现")
+            var font = ResolveFont();
+            if (font != null) _labelText.font = font;
             _labelText.alignment = TextAlignmentOptions.Center;
             _labelText.fontSize = _labelFontSize;
             _labelText.enableWordWrapping = false;
             _labelText.richText = true;
             _labelText.color = Color.white;
-            if (_labelText.fontMaterial != null && _labelText.fontMaterial.HasProperty(_ZTestId))
-                _labelText.fontMaterial.SetInt(_ZTestId, (int)UnityEngine.Rendering.CompareFunction.Always);
+            // TMP SDF 的 ZTest 走全局变量 unity_GUIZTestMode,材质实例写此属性覆盖为 Always 才置顶,
+            // 不被点云遮挡;旧代码写 _ZTest 属性名 TMP 无此属性故从未生效
+            var fontMat = _labelText.fontMaterial;
+            if (fontMat != null)
+                fontMat.SetFloat(_TmpZTestId, (int)UnityEngine.Rendering.CompareFunction.Always);
 
             _labelText.rectTransform.sizeDelta = new Vector2(24f, 12f);
             go.SetActive(false);
@@ -278,9 +293,28 @@ namespace Dicom.Gene
                 _sphere.gameObject.SetActive(active);
         }
 
+        // 字体回退链:注入字体 -> 场景现有 TMP 字体(面板已配中文) -> TMP 默认 -> LiberationSans
+        // 目的是拿到含中文字形的字体,LiberationSans 不含中文会渲染空白
+        TMP_FontAsset ResolveFont()
+        {
+            if (_injectedFont != null) return _injectedFont;
+
+            // 借用场景已存在的 TMP 文本字体(GenePanelUI 通常已配项目中文字体)
+            var existing = FindObjectOfType<TextMeshProUGUI>();
+            if (existing != null && existing.font != null) return existing.font;
+
+            var font = TMP_Settings.defaultFontAsset;
+            if (font == null) font = Resources.Load<TMP_FontAsset>("Fonts & Materials/LiberationSans SDF");
+            return font;
+        }
+
+        // 相机用于文本 billboard;Pico 上主相机未必打 MainCamera tag,故 Camera.main 为空时回退场景任意相机
         Camera GetCamera()
         {
-            if (_camera == null) _camera = Camera.main;
+            if (_camera != null) return _camera;
+            _camera = Camera.main;
+            if (_camera == null) _camera = Camera.current;
+            if (_camera == null) _camera = FindObjectOfType<Camera>();
             return _camera;
         }
 

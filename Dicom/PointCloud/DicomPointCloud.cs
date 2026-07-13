@@ -34,6 +34,8 @@ namespace Dicom.PointCloud
         static readonly int _NormalizeId = Shader.PropertyToID("_DicomNormalize");
         static readonly int _WindowId = Shader.PropertyToID("_DicomWindow");
         static readonly int _TintId = Shader.PropertyToID("_DicomTint");
+        // 未选中点的淡显不透明度(选中点恒 1);默认 1 使 DICOM 路径视觉不变
+        static readonly int _AlphaId = Shader.PropertyToID("_DicomAlpha");
 
         public int PointCount => _pointCount;
         public Material Material => _material;
@@ -48,6 +50,7 @@ namespace Dicom.PointCloud
             _props = new MaterialPropertyBlock();
             _props.SetVector(_WindowId, new Vector4(0.5f, 1f, 0f, 0f));
             _props.SetVector(_TintId, new Vector4(1f, 1f, 1f, 1f));
+            _props.SetFloat(_AlphaId, 1f);
         }
 
         // 运行时指定渲染材质(使用 Dicom/PointCloud shader)
@@ -64,6 +67,8 @@ namespace Dicom.PointCloud
         public void SetNormalize(float min, float max) { EnsureProps(); _props.SetVector(_NormalizeId, new Vector4(min, max, 0f, 0f)); }
         public void SetWindow(float center, float width) { EnsureProps(); _props.SetVector(_WindowId, new Vector4(center, width, 0f, 0f)); }
         public void SetTint(float r, float g, float b, float gain) { EnsureProps(); _props.SetVector(_TintId, new Vector4(r, g, b, gain)); }
+        // 未选中点淡显不透明度(0..1);1=全不透明。选中点(Selected=1)不受此影响
+        public void SetAlpha(float alpha) { EnsureProps(); _props.SetFloat(_AlphaId, Mathf.Clamp01(alpha)); }
         public void SetClassColors(Vector4[] palette) { if (palette == null) return; EnsureProps(); _props.SetVectorArray(_ClassColorsId, palette); }
 
         // 把本实例当前显色态复制到另一个点云实例(供 overlay 高亮复用主点云 colormap)
@@ -90,8 +95,8 @@ namespace Dicom.PointCloud
             if (count <= 0)
                 return;
 
-            // stride 20B = float3 + float + float，与 DicomPoint / shader 一致
-            _pointBuffer = new ComputeBuffer(count, 20, ComputeBufferType.Structured);
+            // stride 24B = float3 + float + float + float，与 DicomPoint / shader 一致
+            _pointBuffer = new ComputeBuffer(count, 24, ComputeBufferType.Structured);
             _pointBuffer.SetData(points, 0, 0, count);
             _pointCount = count;
 

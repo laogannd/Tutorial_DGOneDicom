@@ -26,12 +26,11 @@ namespace Dicom.Gene
         {
             int start = block * BlockSize;
             int end = math.min(start + BlockSize, CellCount);
-            bool useMask = Mask.Length > 0;
 
+            // 全部非 NaN cell 都渲染:选中不透明,未选中半透明淡显(不再按掩码过滤丢弃)
             int count = 0;
             for (int i = start; i < end; i++)
             {
-                if (useMask && Mask[i] == 0) continue;
                 float v = Values[i];
                 if (math.isnan(v)) continue;
                 count++;
@@ -74,18 +73,20 @@ namespace Dicom.Gene
 
             for (int i = start; i < end; i++)
             {
-                if (useMask && Mask[i] == 0) continue;
                 float v = Values[i];
                 if (math.isnan(v)) continue;
 
                 float3 pos = CellPos[i];
                 float intensity = (v - NormalizeMin) / denom;
+                // 无掩码=全部不透明;有掩码=置位 cell 不透明,其余淡显
+                float selected = useMask ? (Mask[i] != 0 ? 1f : 0f) : 1f;
 
                 Points[write++] = new DicomPoint
                 {
                     Position = pos,
                     Intensity = intensity,
-                    ClassId = CellTag[i]
+                    ClassId = CellTag[i],
+                    Selected = selected
                 };
 
                 lo = math.min(lo, pos);
@@ -145,7 +146,8 @@ namespace Dicom.Gene
                 {
                     Position = CellPos[i],
                     Intensity = Intensity,
-                    ClassId = -1f
+                    ClassId = -1f,
+                    Selected = 1f
                 };
             }
         }
