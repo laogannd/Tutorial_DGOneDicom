@@ -16,6 +16,8 @@ namespace Dicom.Gene
         [SerializeField] string _relativeDir = "gene";
         [SerializeField] Material _pointMaterial;
         [SerializeField] DicomLutProfile _lutProfile;
+        // 区域空间文本字体(项目中文字体);空则 GeneBrushVisual 运行时自动查找含中文字形的字体
+        [SerializeField] TMPro.TMP_FontAsset _regionLabelFont;
         // tag->区域名映射,传给调试面板(可空,回退 "区域{tag}")
         [SerializeField] GeneTagNameTable _tagNameTable;
         [SerializeField] LayerMask _excludeLayers;
@@ -63,7 +65,9 @@ namespace Dicom.Gene
             // 画笔选择器 + 可视化(mode2);默认不启用,由面板开关
             var brush = go.AddComponent<GeneBrushSelector>();
             brush.SetTagNameTable(_tagNameTable);
-            go.AddComponent<GeneBrushVisual>();
+            var brushVisual = go.AddComponent<GeneBrushVisual>();
+            // 注入中文字体须在 EnsureLabel 建文本前(此处组件刚加,Awake 未建文本),保证区域名不空白
+            if (_regionLabelFont != null) brushVisual.SetFont(_regionLabelFont);
 
             if (!string.IsNullOrEmpty(_defaultGene))
                 _controller.OnLoaded += _ => _controller.SelectGene(_defaultGene);

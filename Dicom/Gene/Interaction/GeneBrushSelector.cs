@@ -109,18 +109,22 @@ namespace Dicom.Gene
             if (!_enabled) return;
             if (_controller.Model == null || !_controller.Model.NativeReady) return;
 
-            FindActiveHand(out bool active, out Vector3 center);
+            // 悬停(任一 tracked 手)即显示指示球供预览半径;仅捏合的手才染色
+            FindHand(out bool hasHand, out bool pinching, out Vector3 center);
 
-            _hasBrushCenter = active;
-            _painting = active;
-            if (!active)
+            _hasBrushCenter = hasHand;
+            _painting = pinching;
+            if (!hasHand)
             {
                 _currentTag = int.MinValue;
                 return;
             }
 
             _brushCenter = center;
-            PaintAt(center);
+            if (pinching)
+                PaintAt(center);
+            else
+                _currentTag = int.MinValue; // 悬停不染色,指示球中性白便于看清大小
         }
 
         // 球体扫过染色(分块并行):半径内 cell 累积置位;仅当新增了选中才重建点集与派发
@@ -199,11 +203,13 @@ namespace Dicom.Gene
             return $"区域{tag}";
         }
 
-        // 取激活手:徒手捏合(拇指+食指合拢)即激活;球心取食指指尖,无则回退掌心
+        // 取笔刷手:任一 tracked 手都作悬停(显示指示球预览半径);捏合的手优先并触发染色
+        // 球心:捏合取拇指尖↔食指尖中点,悬停取食指指尖(无则回退掌心)
         // IsPinching 每帧对每只手求值维持滞回状态,故遍历全部手不提前 return
-        void FindActiveHand(out bool active, out Vector3 center)
+        void FindHand(out bool hasHand, out bool pinching, out Vector3 center)
         {
-            active = false;
+            hasHand = false;
+            pinching = false;
             center = Vector3.zero;
             EnsureHands();
             if (_hands == null) return;
@@ -214,10 +220,22 @@ namespace Dicom.Gene
                 if (h == null) continue;
 
                 bool pinch = IsPinching(h);
-                if (pinch && !active)
+                // 捏合手最高优先:立即锁定为染色手
+                if (pinch)
                 {
-                    active = true;
+                    hasHand = true;
+                    pinching = true;
                     center = BrushOrigin(h);
+                    // 继续循环仅为维持其余手的滞回状态,不再改写 center
+                    for (int j = i + 1; j < _hands.Length; j++)
+                        if (_hands[j] != null) IsPinching(_hands[j]);
+                    return;
+                }
+                // 未捏合:记录首只手作悬停中心(不打断,后续可能出现捏合手覆盖)
+                if (!hasHand)
+                {
+                    hasHand = true;
+                    center = HoverOrigin(h);
                 }
             }
         }
@@ -258,6 +276,15 @@ namespace Dicom.Gene
             Finger thumb = FindFinger(h, FingerEnum.thumb);
             if (index != null && index.tip != null && thumb != null && thumb.tip != null)
                 return (index.tip.position + thumb.tip.position) * 0.5f;
+            if (index != null && index.tip != null) return index.tip.position;
+            Transform t = h.palmTransform != null ? h.palmTransform : h.transform;
+            return t.position;
+        }
+
+        // 悬停球心:未捏合时取食指指尖(无则回退掌心),指示球随指尖飘,供瞄准与预览半径
+        Vector3 HoverOrigin(Hand h)
+        {
+            Finger index = FindFinger(h, FingerEnum.index);
             if (index != null && index.tip != null) return index.tip.position;
             Transform t = h.palmTransform != null ? h.palmTransform : h.transform;
             return t.position;

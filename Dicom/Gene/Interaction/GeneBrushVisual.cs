@@ -293,20 +293,29 @@ namespace Dicom.Gene
                 _sphere.gameObject.SetActive(active);
         }
 
-        // 字体回退链:注入字体 -> 场景现有 TMP 字体(面板已配中文) -> TMP 默认 -> LiberationSans
-        // 目的是拿到含中文字形的字体,LiberationSans 不含中文会渲染空白
+        // 字体回退链(区域名含中文,须拿到含中文字形的字体,否则渲染空白看似"没出现"):
+        // 注入字体 -> 场景现有含中文的 TMP 字体 -> 已加载资源里任一含中文字形的字体 -> TMP 默认
+        // 用 '区'(区域名常用字)探测字形覆盖,避免误选到不含中文的 LiberationSans
         TMP_FontAsset ResolveFont()
         {
             if (_injectedFont != null) return _injectedFont;
 
-            // 借用场景已存在的 TMP 文本字体(GenePanelUI 通常已配项目中文字体)
-            var existing = FindObjectOfType<TextMeshProUGUI>();
-            if (existing != null && existing.font != null) return existing.font;
+            // 借用场景已存在的 TMP 文本字体(GenePanelUI/UnifiedDebugPanel 通常已配项目中文字体)
+            foreach (var t in FindObjectsByType<TextMeshProUGUI>(FindObjectsSortMode.None))
+                if (t.font != null && HasChinese(t.font)) return t.font;
+            foreach (var t in FindObjectsByType<TextMeshPro>(FindObjectsSortMode.None))
+                if (t != this._labelText && t.font != null && HasChinese(t.font)) return t.font;
 
-            var font = TMP_Settings.defaultFontAsset;
-            if (font == null) font = Resources.Load<TMP_FontAsset>("Fonts & Materials/LiberationSans SDF");
-            return font;
+            // 全量扫已加载字体资源,挑第一个含中文字形的(NotoSansSC 等)
+            var all = Resources.FindObjectsOfTypeAll<TMP_FontAsset>();
+            for (int i = 0; i < all.Length; i++)
+                if (all[i] != null && HasChinese(all[i])) return all[i];
+
+            return TMP_Settings.defaultFontAsset;
         }
+
+        // 探测字体是否含中文字形('区'为区域名常用字)
+        static bool HasChinese(TMP_FontAsset font) => font.HasCharacter('区');
 
         // 相机用于文本 billboard;Pico 上主相机未必打 MainCamera tag,故 Camera.main 为空时回退场景任意相机
         Camera GetCamera()

@@ -172,11 +172,8 @@ namespace Dicom.Gene
             if (_clearButton != null) _clearButton.onClick.AddListener(OnClearSelection);
             if (_analyzeButton != null) _analyzeButton.onClick.AddListener(OnAnalyze);
 
-            if (_brush != null)
-            {
-                ConfigSlider(_brushRadiusSlider, _brush.MinRadius, _brush.MaxRadius, _brush.BrushRadius, OnBrushRadiusChanged);
-                RefreshBrushRadiusLabel();
-            }
+            // 笔刷半径滑条须等 _brush 绑定后再配(点云由 Bootstrap 运行时创建,Start 时 _brush 可能仍空)
+            // 见 SetupControllerControls
 
             if (_resetTransformButton != null) _resetTransformButton.onClick.AddListener(OnResetTransform);
 
@@ -203,6 +200,13 @@ namespace Dicom.Gene
                 ConfigSlider(_modelScaleSlider, _modelTransform.MinScale, _modelTransform.MaxScale,
                     _modelTransform.CurrentScale, OnModelScaleChanged);
             RefreshModelScaleLabel();
+
+            // 笔刷半径滑条:_brush 绑定后配置 min/max/值与监听,补上 Start 时因 _brush 为空漏配的连线
+            if (_brush != null)
+            {
+                ConfigSlider(_brushRadiusSlider, _brush.MinRadius, _brush.MaxRadius, _brush.BrushRadius, OnBrushRadiusChanged);
+                RefreshBrushRadiusLabel();
+            }
         }
 
         void ConfigSlider(Slider s, float min, float max, float value, UnityEngine.Events.UnityAction<float> cb)
