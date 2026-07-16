@@ -98,6 +98,8 @@ namespace Dicom.UI
             _boxCollider = GetComponent<BoxCollider>();
             if (_boxCollider == null) _boxCollider = gameObject.AddComponent<BoxCollider>();
             _boxCollider.isTrigger = false;
+            // 排除玩家身体层与可抓取物层,只与手碰撞:面板不再弹开玩家/推点云,手指推滑块照常
+            VRQuestion.PanelCollisionFilter.Apply(_boxCollider);
 
             _touchEvent = GetComponent<HandTouchEvent>();
             if (_touchEvent == null) _touchEvent = gameObject.AddComponent<HandTouchEvent>();

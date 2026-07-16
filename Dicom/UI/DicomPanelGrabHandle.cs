@@ -64,8 +64,9 @@ namespace Dicom.UI
             }
             _collider.size = _colliderSize;
             _collider.center = _colliderCenter;
-            // 忽略指定层(如玩家层),拖拽时手柄碰撞盒不与其产生物理碰撞;不影响 AutoHand 的抓取检测
-            _collider.excludeLayers = _excludeLayers;
+            // 排除玩家身体层与可抓取物层(叠加自定义排除层),手柄碰撞盒只与手碰撞
+            // 不再弹开玩家、不再推点云模型;抓取走 OverlapSphere 查询,不受 excludeLayers 影响
+            VRQuestion.PanelCollisionFilter.Apply(_collider, _excludeLayers);
 
             // 显式设到 Grabbable 层,AutoHand 的手只在该层做 OverlapSphere 检测
             // 层缺失时 NameToLayer 返回 -1，赋给 layer 会抛异常，守卫后报错跳过

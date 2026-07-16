@@ -84,6 +84,9 @@ namespace Dicom.Gene
         // 注入 tag->名映射(由 Bootstrap 传入,可空则回退 "区域{tag}")
         public void SetTagNameTable(GeneTagNameTable table) => _tagNameTable = table;
 
+        // 暴露已注入的 tag 名表,供 VR 面板复用同一张(工厂未绑时面板从此取,免区域名回退数字)
+        public GeneTagNameTable TagNameTable => _tagNameTable;
+
         // 开关画笔:开启时禁用抓取(防 grip 误抓),关闭时恢复并清笔刷状态
         public void SetEnabled(bool on)
         {

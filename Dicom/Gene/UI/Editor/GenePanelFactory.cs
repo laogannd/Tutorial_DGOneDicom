@@ -101,6 +101,12 @@ namespace Dicom.UI.EditorTools
             public Toggle RegionModeToggle;
             public Button PrevGene, NextGene;
             public TextMeshProUGUI GeneLabel;
+            public TextMeshProUGUI SearchKeywordLabel;
+            public Button[] KeyButtons;
+            public Button BackspaceButton, ClearKeywordButton;
+            public RectTransform SearchResultContent;
+            public Button SearchResultTemplate;
+            public TextMeshProUGUI SearchResultCountLabel;
             public Button LutPresetButton;
             public TextMeshProUGUI LutPresetLabel;
             public Toggle BrushToggle;
@@ -132,6 +138,13 @@ namespace Dicom.UI.EditorTools
             r.PrevGene = CreateButton("PrevGeneButton", gene, "上一个基因");
             r.NextGene = CreateButton("NextGeneButton", gene, "下一个基因");
 
+            // 基因搜索:虚拟键盘输入关键字 -> 实时筛选 -> 可滚动结果按钮点选(上万基因时替代循环翻页)
+            var search = CreateSection(content, "基因搜索", true);
+            r.SearchKeywordLabel = CreateLabel("SearchKeywordLabel", search, "关键字: (空)", 22f, LabelHeight);
+            r.KeyButtons = CreateKeyboard(search, out r.BackspaceButton, out r.ClearKeywordButton);
+            r.SearchResultCountLabel = CreateLabel("SearchResultCountLabel", search, "", 20f, LabelHeight);
+            r.SearchResultContent = CreateResultList(search, out r.SearchResultTemplate);
+
             var colormap = CreateSection(content, "Colormap", true);
             r.LutPresetLabel = CreateLabel("LutPresetLabel", colormap, "Colormap: HotIron", 20f, LabelHeight);
             r.LutPresetButton = CreateButton("LutPresetButton", colormap, "切换 Colormap");
@@ -162,6 +175,59 @@ namespace Dicom.UI.EditorTools
             return r;
         }
 
+        // 虚拟键盘:A-Z + 0-9 网格键 + 退格/清空;每键复用 CreateButton(自带 UIPokeBridge 手指戳)
+        // 网格用 GridLayoutGroup 固定 cellSize 排布,忽略按钮内 LayoutElement 尺寸无害
+        static Button[] CreateKeyboard(RectTransform parent, out Button backspace, out Button clearKw)
+        {
+            // 键盘网格容器:7 列,cell 按面板内容宽自适应估算
+            var gridRt = CreateRect("Keyboard", parent);
+            var grid = gridRt.gameObject.AddComponent<GridLayoutGroup>();
+            const int cols = 7;
+            // 面板内容区约 PanelWidth-滚动条-卡片内边距,取 74px 方格 + 6px 间距,7 列约 554px
+            grid.cellSize = new Vector2(74f, 62f);
+            grid.spacing = new Vector2(6f, 6f);
+            grid.constraint = GridLayoutGroup.Constraint.FixedColumnCount;
+            grid.constraintCount = cols;
+            grid.childAlignment = TextAnchor.UpperCenter;
+            gridRt.gameObject.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+            const string letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+            const string digits = "0123456789";
+            var keys = new Button[letters.Length + digits.Length];
+            int k = 0;
+            foreach (char c in letters) keys[k++] = CreateKeyButton(gridRt, c);
+            foreach (char c in digits) keys[k++] = CreateKeyButton(gridRt, c);
+
+            // 退格/清空单独两键,跟在网格末尾
+            backspace = CreateButton("KeyBackspace", gridRt, "退格");
+            clearKw = CreateButton("KeyClear", gridRt, "清空");
+            return keys;
+        }
+
+        // 单个字符键:标签即字符,GenePanelUI 运行时读子标签文字绑定输入
+        static Button CreateKeyButton(RectTransform parent, char c)
+        {
+            return CreateButton("Key_" + c, parent, c.ToString());
+        }
+
+        // 结果列表:VerticalLayoutGroup 容器(进主滚动区,靠主滚动条滚动) + 结果项模板按钮
+        static RectTransform CreateResultList(RectTransform parent, out Button template)
+        {
+            var listRt = CreateRect("SearchResultList", parent);
+            var layout = listRt.gameObject.AddComponent<VerticalLayoutGroup>();
+            layout.spacing = 6f;
+            layout.childControlWidth = true;
+            layout.childControlHeight = true;
+            layout.childForceExpandWidth = true;
+            layout.childForceExpandHeight = false;
+            listRt.gameObject.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+            // 结果项模板:初始隐藏不占布局,运行时 Instantiate 复用,副本沿用厚碰撞体
+            template = CreateButton("SearchResultTemplate", listRt, "---");
+            template.gameObject.SetActive(false);
+            return listRt;
+        }
+
         static void BindGenePanel(GenePanelUI panel, GenePanelRefs r)
         {
             var so = new SerializedObject(panel);
@@ -171,6 +237,13 @@ namespace Dicom.UI.EditorTools
             Set(so, "_prevGeneButton", r.PrevGene);
             Set(so, "_nextGeneButton", r.NextGene);
             Set(so, "_geneLabel", r.GeneLabel);
+            Set(so, "_searchKeywordLabel", r.SearchKeywordLabel);
+            SetArray(so, "_keyButtons", r.KeyButtons);
+            Set(so, "_backspaceButton", r.BackspaceButton);
+            Set(so, "_clearKeywordButton", r.ClearKeywordButton);
+            Set(so, "_searchResultContent", r.SearchResultContent);
+            Set(so, "_searchResultTemplate", r.SearchResultTemplate);
+            Set(so, "_searchResultCountLabel", r.SearchResultCountLabel);
             Set(so, "_lutPresetButton", r.LutPresetButton);
             Set(so, "_lutPresetLabel", r.LutPresetLabel);
             Set(so, "_brushToggle", r.BrushToggle);
