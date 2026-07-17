@@ -122,6 +122,9 @@ Shader "Dicom/PointCloud"
         Pass
         {
             Name "DicomSelectedURP"
+            // URP 前向绘制对同一 LightMode 只画第一个匹配 Pass;两 Pass 须标不同 LightMode 才都渲染
+            // 选中 Pass 标 SRPDefaultUnlit(tag 列表在前,先画占深度)
+            Tags { "LightMode"="SRPDefaultUnlit" }
             Cull Off
             ZWrite On
             Blend One Zero
@@ -138,6 +141,9 @@ Shader "Dicom/PointCloud"
         Pass
         {
             Name "DicomFadedURP"
+            // 未选中淡显 Pass 标 UniversalForward(与选中 Pass 不同 LightMode),URP 才会两个都画
+            // 否则同 LightMode 下此 Pass 被静默丢弃,全部 Selected=0 的点(幽灵底图/未选淡显)不显示
+            Tags { "LightMode"="UniversalForward" }
             Cull Off
             ZWrite Off
             Blend SrcAlpha OneMinusSrcAlpha

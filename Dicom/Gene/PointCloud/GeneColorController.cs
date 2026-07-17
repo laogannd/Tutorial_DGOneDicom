@@ -26,8 +26,8 @@ namespace Dicom.Gene
         // 基因表达 colormap 配置,未绑定则显色落回灰度
         [SerializeField] DicomLutProfile _lutProfile;
 
-        // 有选区时未选中 cell 的淡显不透明度(0=全透明,1=不透明);由 Bootstrap 注入,面板可实时调
-        [SerializeField, Range(0f, 1f)] float _selectionFade = 0.25f;
+        // 未画取区域淡显不透明度(0=全透明,1=不透明);由 Bootstrap 注入,面板可实时调;现驱动灰色幽灵底图
+        [SerializeField, Range(0f, 1f)] float _selectionFade = 0.12f;
 
         // 加载完成(携带 local 尺寸信息)
         public event Action<GeneModelData> OnLoaded;
@@ -79,14 +79,16 @@ namespace Dicom.Gene
             }
         }
 
-        // 未选中 cell 淡显不透明度;setter 立即刷新当前点云 alpha(仅在有选区时可见)
+        // 未画取区域淡显不透明度(现由灰色幽灵底图承载,GeneBrushVisual 读此值设幽灵 alpha);
+        // 主点云只含已画取 cell 恒不透明,不再受此值影响
+        public event Action<float> OnSelectionFadeChanged;
         public float SelectionFade
         {
             get => _selectionFade;
             set
             {
                 _selectionFade = Mathf.Clamp01(value);
-                if (_mask.IsCreated) _pointCloud.SetAlpha(_selectionFade);
+                OnSelectionFadeChanged?.Invoke(_selectionFade);
             }
         }
         // 加载完成后可用,供面板列基因菜单
@@ -316,8 +318,8 @@ namespace Dicom.Gene
                 writeJob.Schedule(blocks, 1).Complete();
 
                 _pointCloud.SetPoints(points, total);
-                // 有选区:未选中 cell 淡显;无选区:全部不透明
-                _pointCloud.SetAlpha(_mask.IsCreated ? _selectionFade : 1f);
+                // 主点云只含已画取(或无掩码全量)cell,恒不透明;未画取区域由灰色幽灵底图呈现
+                _pointCloud.SetAlpha(1f);
 
                 float3 lo = new float3(float.MaxValue);
                 float3 hi = new float3(float.MinValue);
@@ -559,8 +561,10 @@ namespace Dicom.Gene
             }
         }
 
-        // 把未画取 cell(mask==0;无掩码=全部)构建成幽灵点集写入指定 DicomPointCloud(恒定强度,Selected=0)
-        // 供 GeneBrushVisual 未画区域底图:已画处点从幽灵消失,空洞可见。bounds 用全模型(未画点遍布全模型)
+        // 把全模型全部 cell 构建成幽灵点集写入指定 DicomPointCloud(恒定强度,全 Selected=0)
+        // 供 GeneBrushVisual 完整底图:全模型灰白半透明常驻(不写深度不遮挡),已画取的不透明彩色点
+        // 由主点云/overlay 叠在上层覆盖。与掩码/基因无关,模型加载后建一次即可,不随选区重建
+        // bounds 用全模型(点遍布全模型)
         public void BuildGhost(DicomPointCloud ghost, float intensity)
         {
             if (ghost == null || _model == null || !_model.NativeReady)
@@ -570,61 +574,34 @@ namespace Dicom.Gene
             }
 
             int cellCount = _model.CellCount;
+            if (cellCount <= 0)
+            {
+                ghost.SetPoints(default, 0);
+                return;
+            }
+
             const int blockSize = 4096;
             int blocks = (cellCount + blockSize - 1) / blockSize;
 
-            // 无掩码传零长数组(全部视为未画),GeneGhost*Job 按 Mask.Length==0 判断
-            var blockCounts = new NativeArray<int>(blocks, Allocator.TempJob);
-            var blockOffsets = new NativeArray<int>(blocks, Allocator.TempJob);
-            NativeArray<DicomPoint> points = default;
-            NativeArray<byte> emptyMask = default;
-            NativeArray<byte> maskArg = _mask.IsCreated ? _mask : (emptyMask = new NativeArray<byte>(0, Allocator.TempJob));
-
+            // 渲染全部 cell:输出下标==cell 下标,无需计数/前缀和,单遍直接写入
+            var points = new NativeArray<DicomPoint>(cellCount, Allocator.TempJob);
             try
             {
-                new GeneGhostCountJob
-                {
-                    Mask = maskArg,
-                    BlockSize = blockSize,
-                    CellCount = cellCount,
-                    BlockCounts = blockCounts
-                }.Schedule(blocks, 1).Complete();
-
-                int total = 0;
-                for (int b = 0; b < blocks; b++)
-                {
-                    blockOffsets[b] = total;
-                    total += blockCounts[b];
-                }
-
-                if (total <= 0)
-                {
-                    ghost.SetPoints(default, 0);
-                    return;
-                }
-
-                points = new NativeArray<DicomPoint>(total, Allocator.TempJob);
                 new GeneGhostWriteJob
                 {
                     CellPos = _model.CellPos,
-                    Mask = maskArg,
-                    BlockOffsets = blockOffsets,
                     BlockSize = blockSize,
                     CellCount = cellCount,
                     Intensity = intensity,
                     Points = points
                 }.Schedule(blocks, 1).Complete();
 
-                ghost.SetPoints(points, total);
-                // 未画点遍布全模型,用全模型 local bounds 做剔除(非选区 bounds)
+                ghost.SetPoints(points, cellCount);
                 ghost.SetLocalBounds(new Bounds(Vector3.zero, ModelLocalSize));
             }
             finally
             {
-                if (blockCounts.IsCreated) blockCounts.Dispose();
-                if (blockOffsets.IsCreated) blockOffsets.Dispose();
                 if (points.IsCreated) points.Dispose();
-                if (emptyMask.IsCreated) emptyMask.Dispose();
             }
         }
 

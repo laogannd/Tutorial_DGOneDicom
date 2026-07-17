@@ -43,20 +43,26 @@ namespace Dicom.Gene
 
         Camera _camera;
         DicomPointCloud _overlay;
-        // 未画区域幽灵底图:全模型未画 cell 暗淡灰白显示,已画处点消失露出空洞,一眼看清漏哪
-        // 仅画笔开且未选基因时显示(选基因时主点云已铺全模型淡显,幽灵冗余);近 13.6 万点故节流重建
+        // 完整点云底图:全模型全部 cell 灰白半透明常驻(Selected=0 走淡显 Pass,不写深度故不遮挡)。
+        // 已画取的不透明彩色点由主点云(选基因走 LUT 表达色)或 overlay(未选基因走高亮色)叠上层覆盖,
+        // 得"完整点云 = 已画不透明 + 未画半透明不遮挡"。与掩码/基因无关,模型加载后建一次,不随选区重建
+        // 用独立材质实例(低 renderQueue)确保幽灵先画在最底层,不盖掉上层已画彩色点
         DicomPointCloud _ghost;
+        Material _ghostMaterial;
+        // 模型(重)加载后置脏,下次显示时重建一次全模型底图
         bool _ghostDirty;
-        float _ghostNextRebuild;
+
         readonly StringBuilder _sb = new StringBuilder(256);
 
-        // 幽灵点:恒定强度(Intensity 模式下配灰色 Tint 得暗淡灰白)+ 低不透明度 + 略小点尺寸
-        [SerializeField] float _ghostIntensity = 0.7f;
-        [SerializeField, Range(0f, 1f)] float _ghostAlpha = 0.16f;
-        [SerializeField] float _ghostPointSize = 0.0018f;
-        [SerializeField] Color _ghostTint = new Color(0.6f, 0.62f, 0.66f, 1f);
-        // 幽灵重建最小间隔(秒):选区变化置脏,Update 里按此节流重建,避免每笔刷帧重建 13.6 万点抖动
-        [SerializeField] float _ghostRebuildInterval = 0.25f;
+        // 幽灵点:满强度(Intensity 模式下 g=1,颜色直接等于 Tint)+ 低不透明度 + 小于主点云的尺寸
+        // 幽灵是"未画取"底图:点云沿视线密集叠加,单点 alpha 会累积成近不透明,故取低值(约 0.12)
+        // 才真正透出背景显得稀疏透明;点也做小,已画取的主点云点更大更密更醒目,一眼分清画没画
+        [SerializeField] float _ghostIntensity = 1f;
+        [SerializeField, Range(0f, 1f)] float _ghostAlpha = 0.12f;
+        [SerializeField] float _ghostPointSize = 0.0022f;
+        [SerializeField] Color _ghostTint = new Color(0.7f, 0.74f, 0.82f, 1f);
+        // 幽灵材质 renderQueue:比主点云(Transparent=3000)略低,确保先画在最底层,被上层已画彩色点覆盖
+        const int GhostRenderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent - 1;
 
         // 区域文本字体:由 Bootstrap/面板注入(项目中文字体);为空则运行时回退解析
         TMP_FontAsset _injectedFont;
@@ -85,12 +91,31 @@ namespace Dicom.Gene
             _controller = GetComponent<GeneColorController>();
             _mainCloud = GetComponent<DicomPointCloud>();
             _brush.OnSelectionChanged += OnSelectionChanged;
+            // 模型(重)加载后幽灵底图须按新模型全量 cell 重建
+            _controller.OnLoaded += OnModelLoaded;
+            // "未画取淡显"值现由幽灵底图承载:面板/Bootstrap 调 SelectionFade 时实时刷幽灵 alpha
+            _controller.OnSelectionFadeChanged += OnSelectionFadeChanged;
+            // Bootstrap 常在本组件挂载前就注入 SelectionFade(事件已过),主动拉取当前值作幽灵初值,防漏
+            OnSelectionFadeChanged(_controller.SelectionFade);
+        }
+
+        // 面板/Bootstrap 调节未画取淡显:同步到幽灵底图 alpha(幽灵已建才生效,未建则 EnsureGhost 用序列化默认)
+        void OnSelectionFadeChanged(float fade)
+        {
+            if (_destroyed) return;
+            _ghostAlpha = Mathf.Clamp01(fade);
+            if (_ghost != null) _ghost.SetAlpha(_ghostAlpha);
         }
 
         void OnDestroy()
         {
             _destroyed = true;
             if (_brush != null) _brush.OnSelectionChanged -= OnSelectionChanged;
+            if (_controller != null)
+            {
+                _controller.OnLoaded -= OnModelLoaded;
+                _controller.OnSelectionFadeChanged -= OnSelectionFadeChanged;
+            }
             // 指示球/文本/指向线是场景根物体(非子物体),须显式销毁避免残留
             if (_sphere != null) Destroy(_sphere.gameObject);
             if (_label != null) Destroy(_label.gameObject);
@@ -99,6 +124,15 @@ namespace Dicom.Gene
             if (_ghost != null) Destroy(_ghost.gameObject);
             if (_sphereMaterial != null) Destroy(_sphereMaterial);
             if (_lineMaterial != null) Destroy(_lineMaterial);
+            // 幽灵材质是主材质的运行时副本(为独立 renderQueue),须显式销毁
+            if (_ghostMaterial != null) Destroy(_ghostMaterial);
+        }
+
+        // 模型(重)加载:置脏使幽灵底图按新模型全量 cell 重建(下次显示时)
+        void OnModelLoaded(GeneModelData _)
+        {
+            if (_destroyed) return;
+            _ghostDirty = true;
         }
 
         // 选中集变化后:选了基因清 overlay(主点云表达色透出),未选基因才恒定高亮;并刷新区域文本
@@ -106,19 +140,18 @@ namespace Dicom.Gene
         {
             if (_destroyed || _brush == null || !_brush.BrushEnabled) return;
 
+            // 幽灵底图与掩码无关(全模型常驻),此处不动;只管已画取的上层不透明彩色点
             if (_controller.CurrentGene != null)
             {
-                // 已有表达值:主点云 RebuildPoints 已用真实 LUT 表达色渲染选中 cell,overlay/幽灵会盖掉,故清空
+                // 已有表达值:主点云 RebuildPoints 已用真实 LUT 表达色渲染选中 cell,overlay 会盖掉,故清空
                 if (_overlay != null && _overlay.PointCount > 0) _overlay.SetPoints(default, 0);
-                if (_ghost != null && _ghost.PointCount > 0) _ghost.SetPoints(default, 0);
             }
             else
             {
-                // 无基因可映射:用 overlay 恒定强度即时高亮选区(量小),幽灵底图节流重建标脏
+                // 无基因可映射:用 overlay 恒定强度即时高亮选区(量小)叠在幽灵底图上层
                 EnsureOverlay();
                 _controller.BuildOverlay(_overlay, 1f);
                 _controller.ApplyColorState(_overlay);
-                _ghostDirty = true;
             }
 
             RefreshRegionLabel();
@@ -131,7 +164,8 @@ namespace Dicom.Gene
                 SetSphereActive(false);
                 HideRegion();
                 if (_overlay != null && _overlay.PointCount > 0) _overlay.SetPoints(default, 0);
-                if (_ghost != null && _ghost.PointCount > 0) _ghost.SetPoints(default, 0);
+                // 幽灵底图整体隐藏(保留点集,再开画笔无需重建),关画笔不干扰表达视图
+                SetGhostActive(false);
                 return;
             }
 
@@ -141,25 +175,26 @@ namespace Dicom.Gene
             if (_hasRegion) BillboardRegionLabel();
         }
 
-        // 幽灵底图:仅画笔开且未选基因时显示(选基因时主点云已铺全模型淡显);节流重建避免每帧 13.6 万点抖动
-        // 首次进入(未画/无掩码)也须建一次,让全模型未画区域立即以灰白呈现
+        // 完整点云底图:画笔开启即显示(选不选基因都显示),常驻全模型灰白半透明。
+        // 与掩码/基因无关,故只在模型(重)加载置脏时重建一次,平时零开销
         void UpdateGhost()
         {
-            if (_controller.CurrentGene != null)
-            {
-                if (_ghost != null && _ghost.PointCount > 0) _ghost.SetPoints(default, 0);
-                return;
-            }
-
-            // 未选基因:确保幽灵存在;首帧强制建一次(PointCount==0 且未标脏也建),之后按脏标+节流重建
             EnsureGhost();
-            bool firstBuild = _ghost != null && _ghost.PointCount == 0;
-            if ((_ghostDirty || firstBuild) && Time.unscaledTime >= _ghostNextRebuild)
+            if (_ghost == null) return;
+
+            // 模型(重)加载后或从未建过:重建一次全模型底图
+            if (_ghostDirty || _ghost.PointCount == 0)
             {
                 _ghostDirty = false;
-                _ghostNextRebuild = Time.unscaledTime + _ghostRebuildInterval;
                 _controller.BuildGhost(_ghost, _ghostIntensity);
             }
+            SetGhostActive(_ghost.PointCount > 0);
+        }
+
+        void SetGhostActive(bool on)
+        {
+            if (_ghost != null && _ghost.gameObject.activeSelf != on)
+                _ghost.gameObject.SetActive(on);
         }
 
         // 指示球跟随笔刷球心:直径=2*半径,颜色随最近所属部位;染色中更实,悬停淡
@@ -266,22 +301,33 @@ namespace Dicom.Gene
         }
 
         // 幽灵点云挂子物体,identity 局部变换 -> 与主点云同一 local->world,cell local 坐标直接对齐
-        // 复用主材质,但显色态独立:Intensity 模式 + 灰色 Tint + 低 alpha,得暗淡去饱和灰白底图
+        // 独立材质实例(主材质副本,仅调低 renderQueue):确保幽灵先画在最底层,被上层已画彩色点覆盖;
+        // 显色态独立:Intensity 模式 + 灰色 Tint + 低 alpha,得去饱和灰白半透明完整底图
         void EnsureGhost()
         {
             if (_ghost != null) return;
 
-            var go = new GameObject("GeneUnpaintedGhost");
+            var go = new GameObject("GeneFullCloudGhost");
             go.transform.SetParent(transform, false);
             go.transform.localPosition = Vector3.zero;
             go.transform.localRotation = Quaternion.identity;
             go.transform.localScale = Vector3.one;
 
             _ghost = go.AddComponent<DicomPointCloud>();
+            // 复制主材质到独立实例并调低 renderQueue,使幽灵渲染排序早于主点云/overlay,
+            // 半透明底图不盖掉上层已画的不透明彩色点。改共享材质会连带影响主点云,故必须实例化副本
             if (_mainCloud != null && _mainCloud.Material != null)
-                _ghost.SetMaterial(_mainCloud.Material);
+            {
+                if (_ghostMaterial == null)
+                {
+                    _ghostMaterial = new Material(_mainCloud.Material);
+                    _ghostMaterial.renderQueue = GhostRenderQueue;
+                }
+                _ghost.SetMaterial(_ghostMaterial);
+            }
             _ghost.SetPointSize(_ghostPointSize);
-            // Intensity 模式:color = saturate(g*gain)*tint;窗宽窗位全通使 g=intensity,tint 灰得暗淡灰白
+            // Intensity 模式:color = saturate(g*gain)*tint;窗宽窗位全通使 g=intensity=1,
+            // 故颜色直接等于 tint(浅冷灰),得清晰可辨的中性身体底图,不再被暗强度压没
             _ghost.SetColorMode((float)Dicom.PointCloud.DicomColorMode.Intensity);
             _ghost.SetWindow(0.5f, 1f);
             _ghost.SetNormalize(0f, 1f);
