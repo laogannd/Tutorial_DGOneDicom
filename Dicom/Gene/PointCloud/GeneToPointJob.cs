@@ -160,7 +160,7 @@ namespace Dicom.Gene
         }
     }
 
-    // 幽灵点云构建:渲染全模型全部 cell,恒定强度 + Selected=0(全走半透明淡显 Pass)
+    // 幽灵点云构建(无基因回退):渲染全模型全部 cell,恒定强度 + Selected=0(全走半透明淡显 Pass)
     // 供 GeneBrushVisual 底图:完整模型以灰白半透明常驻(不写深度故不遮挡),已画取的不透明彩色点
     // 由主点云(选基因走 LUT 表达色)或 overlay(未选基因走高亮色)叠在上层覆盖,得"完整点云"效果
     // 因渲染全部 cell,输出下标==cell 下标,无需计数/前缀和,单遍按 cell 下标直接写入
@@ -185,6 +185,50 @@ namespace Dicom.Gene
                     Position = CellPos[i],
                     Intensity = Intensity,
                     ClassId = -1f,
+                    Selected = 0f
+                };
+            }
+        }
+    }
+
+    // 幽灵点云构建(选中基因):未画取底图按表达值走 Cividis 半透明。渲染有表达值(非 NaN)的全部 cell,
+    // 每 cell 写归一化表达强度 + Selected=0(走淡显 Pass,由 GeneBrushVisual 设 Cividis LUT + 可量化 alpha)。
+    // 已画取的 cell 由主点云(当前配色不透明)叠在上层覆盖,得"已画不透明 + 未画 Cividis 透明"效果。
+    // 与掩码无关(全表达 cell 都画,画取的被主点云盖住),故只随基因切换重建,不随每笔画取重建。
+    // 跳过 NaN 故非全量,需计数(复用 GeneCountJob 传零长掩码)+ 前缀和后各块写专属区段
+    [BurstCompile]
+    public struct GeneGhostExprWriteJob : IJobParallelFor
+    {
+        [ReadOnly] public NativeArray<float3> CellPos;
+        [ReadOnly] public NativeArray<float> Values;
+        [ReadOnly] public NativeArray<int> CellTag;
+        [ReadOnly] public NativeArray<int> BlockOffsets;
+
+        public int BlockSize;
+        public int CellCount;
+        public float NormalizeMin;
+        public float NormalizeMax;
+
+        [NativeDisableParallelForRestriction] public NativeArray<DicomPoint> Points;
+
+        public void Execute(int block)
+        {
+            int start = block * BlockSize;
+            int end = math.min(start + BlockSize, CellCount);
+            int write = BlockOffsets[block];
+            float denom = math.max(NormalizeMax - NormalizeMin, 1e-5f);
+
+            for (int i = start; i < end; i++)
+            {
+                float v = Values[i];
+                if (math.isnan(v)) continue;
+
+                float intensity = (v - NormalizeMin) / denom;
+                Points[write++] = new DicomPoint
+                {
+                    Position = CellPos[i],
+                    Intensity = intensity,
+                    ClassId = CellTag[i],
                     Selected = 0f
                 };
             }

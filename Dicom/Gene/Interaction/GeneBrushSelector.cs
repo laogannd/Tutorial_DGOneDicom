@@ -116,7 +116,12 @@ namespace Dicom.Gene
             FindHand(out bool hasHand, out bool pinching, out Vector3 center);
 
             _hasBrushCenter = hasHand;
+            // 捏合起止边沿:激活即进入过滤模式(空掩码露 Cividis 底图),松开且选区空则回查看全部
+            bool wasPainting = _painting;
             _painting = pinching;
+            if (pinching && !wasPainting) OnPaintingStarted();
+            else if (!pinching && wasPainting) OnPaintingEnded();
+
             if (!hasHand)
             {
                 _currentTag = int.MinValue;
@@ -128,6 +133,21 @@ namespace Dicom.Gene
                 PaintAt(center);
             else
                 _currentTag = int.MinValue; // 悬停不染色,指示球中性白便于看清大小
+        }
+
+        // 捏合激活:确保掩码存在(空掩码即进入过滤模式),重建主点云使其只渲染已画取 cell。
+        // 此刻尚未画取故主点云清空,整模型露出 Cividis 半透明底图,随后扫过的 cell 变不透明彩色
+        void OnPaintingStarted()
+        {
+            _controller.EnsureMask();
+            _controller.ApplySelection();
+        }
+
+        // 捏合松开:若本次全程未画取任何 cell(选区仍空),视为未做区域筛选,清掩码回到查看全部(全实心不透明)
+        void OnPaintingEnded()
+        {
+            if (SelectedCount > 0) return;
+            ClearSelection();
         }
 
         // 球体扫过染色(分块并行):半径内 cell 累积置位;仅当新增了选中才重建点集与派发

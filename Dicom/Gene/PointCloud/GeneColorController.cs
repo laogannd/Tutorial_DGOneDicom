@@ -287,12 +287,16 @@ namespace Dicom.Gene
                 if (total <= 0)
                 {
                     _pointCloud.SetPoints(default, 0);
-                    _localBounds = new Bounds(Vector3.zero, Vector3.zero);
-                    _pointCloud.SetLocalBounds(_localBounds);
                     _report.PointCount = 0;
+                    // 过滤模式(有掩码)下选区暂空(如捏合刚激活尚未画取):主点云清空露出 Cividis 底图,
+                    // 但保留上次全表达 AABB,防碰撞盒/线框瞬间塌缩;仅查看全部(无掩码)确无可见 cell 时才归零
+                    if (!_mask.IsCreated)
+                    {
+                        _localBounds = new Bounds(Vector3.zero, Vector3.zero);
+                        _pointCloud.SetLocalBounds(_localBounds);
+                        OnBoundsChanged?.Invoke(_localBounds);
+                    }
                     RaiseReport();
-                    OnBoundsChanged?.Invoke(_localBounds);
-                    Debug.LogWarning("当前基因/选区无可见 cell");
                     return;
                 }
 
@@ -561,10 +565,11 @@ namespace Dicom.Gene
             }
         }
 
-        // 把全模型全部 cell 构建成幽灵点集写入指定 DicomPointCloud(恒定强度,全 Selected=0)
-        // 供 GeneBrushVisual 完整底图:全模型灰白半透明常驻(不写深度不遮挡),已画取的不透明彩色点
-        // 由主点云/overlay 叠在上层覆盖。与掩码/基因无关,模型加载后建一次即可,不随选区重建
-        // bounds 用全模型(点遍布全模型)
+        // 把未画取底图构建成幽灵点集写入指定 DicomPointCloud(全 Selected=0,走淡显 Pass)。
+        // 选中基因:只渲染有表达值(非 NaN)的 cell,每 cell 写归一化表达强度,交 GeneBrushVisual 设
+        //   Cividis LUT + 可量化 alpha,得"未画取区域按表达值走 Cividis 半透明"效果;
+        // 未选基因(无表达值可映射):回退全模型恒定强度灰白底图(旧行为)。
+        // 与掩码无关(画取的 cell 也在底图里,被主点云不透明彩色叠上层盖住),故只随基因/模型切换重建,不随选区重建
         public void BuildGhost(DicomPointCloud ghost, float intensity)
         {
             if (ghost == null || _model == null || !_model.NativeReady)
@@ -580,10 +585,17 @@ namespace Dicom.Gene
                 return;
             }
 
+            // 选中基因且表达值长度匹配:走 Cividis 表达底图
+            if (_currentGene != null && _currentGene.Values.Length == cellCount)
+            {
+                BuildGhostExpr(ghost, cellCount);
+                return;
+            }
+
+            // 无基因回退:渲染全部 cell,输出下标==cell 下标,无需计数/前缀和,单遍直接写入
             const int blockSize = 4096;
             int blocks = (cellCount + blockSize - 1) / blockSize;
 
-            // 渲染全部 cell:输出下标==cell 下标,无需计数/前缀和,单遍直接写入
             var points = new NativeArray<DicomPoint>(cellCount, Allocator.TempJob);
             try
             {
@@ -601,6 +613,71 @@ namespace Dicom.Gene
             }
             finally
             {
+                if (points.IsCreated) points.Dispose();
+            }
+        }
+
+        // 选中基因的幽灵表达底图:两遍式跳过 NaN(复用 GeneCountJob 传零长掩码计数),
+        // 每有效 cell 写归一化表达强度 + Selected=0。归一化范围同主点云(基因值域),使 Cividis 铺满
+        void BuildGhostExpr(DicomPointCloud ghost, int cellCount)
+        {
+            const int blockSize = 4096;
+            int blocks = (cellCount + blockSize - 1) / blockSize;
+
+            var values = new NativeArray<float>(_currentGene.Values, Allocator.TempJob);
+            var blockCounts = new NativeArray<int>(blocks, Allocator.TempJob);
+            var blockOffsets = new NativeArray<int>(blocks, Allocator.TempJob);
+            var emptyMask = new NativeArray<byte>(0, Allocator.TempJob);
+            NativeArray<DicomPoint> points = default;
+
+            try
+            {
+                // 零长掩码 => GeneCountJob 统计全部非 NaN cell(不过滤掩码)
+                new GeneCountJob
+                {
+                    Values = values,
+                    Mask = emptyMask,
+                    BlockSize = blockSize,
+                    CellCount = cellCount,
+                    BlockCounts = blockCounts
+                }.Schedule(blocks, 1).Complete();
+
+                int total = 0;
+                for (int b = 0; b < blocks; b++)
+                {
+                    blockOffsets[b] = total;
+                    total += blockCounts[b];
+                }
+
+                if (total <= 0)
+                {
+                    ghost.SetPoints(default, 0);
+                    return;
+                }
+
+                points = new NativeArray<DicomPoint>(total, Allocator.TempJob);
+                new GeneGhostExprWriteJob
+                {
+                    CellPos = _model.CellPos,
+                    Values = values,
+                    CellTag = _model.CellTag,
+                    BlockOffsets = blockOffsets,
+                    BlockSize = blockSize,
+                    CellCount = cellCount,
+                    NormalizeMin = _currentGene.Min,
+                    NormalizeMax = _currentGene.Max,
+                    Points = points
+                }.Schedule(blocks, 1).Complete();
+
+                ghost.SetPoints(points, total);
+                ghost.SetLocalBounds(new Bounds(Vector3.zero, ModelLocalSize));
+            }
+            finally
+            {
+                if (values.IsCreated) values.Dispose();
+                if (blockCounts.IsCreated) blockCounts.Dispose();
+                if (blockOffsets.IsCreated) blockOffsets.Dispose();
+                if (emptyMask.IsCreated) emptyMask.Dispose();
                 if (points.IsCreated) points.Dispose();
             }
         }
