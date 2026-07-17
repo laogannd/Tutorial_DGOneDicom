@@ -68,6 +68,9 @@ namespace Dicom.Gene
             var brushVisual = go.AddComponent<GeneBrushVisual>();
             // 注入中文字体须在 EnsureLabel 建文本前(此处组件刚加,Awake 未建文本),保证区域名不空白
             if (_regionLabelFont != null) brushVisual.SetFont(_regionLabelFont);
+            // 覆盖率信标:每区域一个信标球标记已画/未画,消除"只见已画不知漏哪"
+            var beacons = go.AddComponent<GeneCoverageBeacons>();
+            if (_regionLabelFont != null) beacons.SetFont(_regionLabelFont);
 
             if (!string.IsNullOrEmpty(_defaultGene))
                 _controller.OnLoaded += _ => _controller.SelectGene(_defaultGene);

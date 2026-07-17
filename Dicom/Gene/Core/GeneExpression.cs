@@ -13,6 +13,9 @@ namespace Dicom.Gene
         public float Min;
         public float Max;
 
+        // 全模型内表达该基因(值非 NaN 且 > 0)的 cell 数,供区域画取比例做分母;解析时顺带统计
+        public int ExpressedCount;
+
         public int Count => Values != null ? Values.Length : 0;
     }
 }

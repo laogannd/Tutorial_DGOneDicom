@@ -68,6 +68,17 @@ namespace Dicom.Gene
         public DicomLutProfile LutProfile => _lutProfile;
         public bool HasSelection => _mask.IsCreated;
 
+        // 模型全量 cell 的 local 尺寸(mm,已居中,与缩放无关);供信标按模型体量定尺寸
+        public Vector3 ModelLocalSize
+        {
+            get
+            {
+                if (_model == null) return Vector3.zero;
+                float3 span = ((float3)(_model.GridMax - _model.GridMin)) * _cellSpacing;
+                return (Vector3)span;
+            }
+        }
+
         // 未选中 cell 淡显不透明度;setter 立即刷新当前点云 alpha(仅在有选区时可见)
         public float SelectionFade
         {
@@ -131,6 +142,7 @@ namespace Dicom.Gene
                 _geneRequestSeq = 0;
                 _model = model;
                 BuildNativeCells(model);
+                BuildRegionRoster();
 
                 _report.Width = model.GridMax.x - model.GridMin.x + 1;
                 _report.Height = model.GridMax.y - model.GridMin.y + 1;
@@ -428,6 +440,58 @@ namespace Dicom.Gene
             return true;
         }
 
+        // === 区域花名册(全量,加载后一次性统计,供覆盖率信标) ===
+        // 每个 tag 的总 cell 数 + local 质心;不随选区变化,模型加载后即固定
+        public struct RegionInfo { public int Tag; public int Total; public Vector3 LocalCentroid; }
+
+        readonly List<RegionInfo> _regionRoster = new List<RegionInfo>();
+
+        // 全部区域花名册(引用内部复用列表,勿缓存长期持有);模型未就绪为空
+        public IReadOnlyList<RegionInfo> RegionRoster => _regionRoster;
+
+        // 遍历全量 cell 按 tag 汇总总数与质心;O(CellCount) 单遍,仅加载时调一次
+        void BuildRegionRoster()
+        {
+            _regionRoster.Clear();
+            if (_model == null || !_model.NativeReady) return;
+
+            var count = new Dictionary<int, int>();
+            var sum = new Dictionary<int, float3>();
+            for (int i = 0; i < _model.CellCount; i++)
+            {
+                int t = _model.CellTag[i];
+                count.TryGetValue(t, out int c);
+                count[t] = c + 1;
+                sum.TryGetValue(t, out float3 s);
+                sum[t] = s + _model.CellPos[i];
+            }
+
+            foreach (var kv in count)
+            {
+                int total = kv.Value;
+                _regionRoster.Add(new RegionInfo
+                {
+                    Tag = kv.Key,
+                    Total = total,
+                    LocalCentroid = (Vector3)(sum[kv.Key] / total)
+                });
+            }
+        }
+
+        // 收集当前掩码内各 tag 的已画 cell 数(写入调用方传入的字典,已清空);无掩码则全零(不写入)
+        public void CollectPaintedByTag(Dictionary<int, int> painted)
+        {
+            painted.Clear();
+            if (!_mask.IsCreated || _model == null || !_model.NativeReady) return;
+            for (int i = 0; i < _mask.Length; i++)
+            {
+                if (_mask[i] == 0) continue;
+                int t = _model.CellTag[i];
+                painted.TryGetValue(t, out int c);
+                painted[t] = c + 1;
+            }
+        }
+
         // 是否处于区域模式(有选中掩码且非全零由调用方保证)
         public void ApplySelection() => RebuildPoints();
 
@@ -492,6 +556,75 @@ namespace Dicom.Gene
                 if (blockCounts.IsCreated) blockCounts.Dispose();
                 if (blockOffsets.IsCreated) blockOffsets.Dispose();
                 if (points.IsCreated) points.Dispose();
+            }
+        }
+
+        // 把未画取 cell(mask==0;无掩码=全部)构建成幽灵点集写入指定 DicomPointCloud(恒定强度,Selected=0)
+        // 供 GeneBrushVisual 未画区域底图:已画处点从幽灵消失,空洞可见。bounds 用全模型(未画点遍布全模型)
+        public void BuildGhost(DicomPointCloud ghost, float intensity)
+        {
+            if (ghost == null || _model == null || !_model.NativeReady)
+            {
+                if (ghost != null) ghost.SetPoints(default, 0);
+                return;
+            }
+
+            int cellCount = _model.CellCount;
+            const int blockSize = 4096;
+            int blocks = (cellCount + blockSize - 1) / blockSize;
+
+            // 无掩码传零长数组(全部视为未画),GeneGhost*Job 按 Mask.Length==0 判断
+            var blockCounts = new NativeArray<int>(blocks, Allocator.TempJob);
+            var blockOffsets = new NativeArray<int>(blocks, Allocator.TempJob);
+            NativeArray<DicomPoint> points = default;
+            NativeArray<byte> emptyMask = default;
+            NativeArray<byte> maskArg = _mask.IsCreated ? _mask : (emptyMask = new NativeArray<byte>(0, Allocator.TempJob));
+
+            try
+            {
+                new GeneGhostCountJob
+                {
+                    Mask = maskArg,
+                    BlockSize = blockSize,
+                    CellCount = cellCount,
+                    BlockCounts = blockCounts
+                }.Schedule(blocks, 1).Complete();
+
+                int total = 0;
+                for (int b = 0; b < blocks; b++)
+                {
+                    blockOffsets[b] = total;
+                    total += blockCounts[b];
+                }
+
+                if (total <= 0)
+                {
+                    ghost.SetPoints(default, 0);
+                    return;
+                }
+
+                points = new NativeArray<DicomPoint>(total, Allocator.TempJob);
+                new GeneGhostWriteJob
+                {
+                    CellPos = _model.CellPos,
+                    Mask = maskArg,
+                    BlockOffsets = blockOffsets,
+                    BlockSize = blockSize,
+                    CellCount = cellCount,
+                    Intensity = intensity,
+                    Points = points
+                }.Schedule(blocks, 1).Complete();
+
+                ghost.SetPoints(points, total);
+                // 未画点遍布全模型,用全模型 local bounds 做剔除(非选区 bounds)
+                ghost.SetLocalBounds(new Bounds(Vector3.zero, ModelLocalSize));
+            }
+            finally
+            {
+                if (blockCounts.IsCreated) blockCounts.Dispose();
+                if (blockOffsets.IsCreated) blockOffsets.Dispose();
+                if (points.IsCreated) points.Dispose();
+                if (emptyMask.IsCreated) emptyMask.Dispose();
             }
         }
 

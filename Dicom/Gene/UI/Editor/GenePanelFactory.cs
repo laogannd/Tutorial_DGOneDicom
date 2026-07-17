@@ -117,6 +117,13 @@ namespace Dicom.UI.EditorTools
             public TextMeshProUGUI RegionNameLabel;
             public Button[] TopGeneButtons = new Button[GeneTopSlots];
             public TextMeshProUGUI[] TopGeneLabels = new TextMeshProUGUI[GeneTopSlots];
+            // 区域结果内基因搜索:关键字查任意基因的画取占比(独立于顶部基因搜索)
+            public TextMeshProUGUI RegionSearchKeywordLabel;
+            public Button[] RegionKeyButtons;
+            public Button RegionBackspaceButton, RegionClearKeywordButton;
+            public RectTransform RegionSearchResultContent;
+            public Button RegionSearchResultTemplate;
+            public TextMeshProUGUI RegionSearchResultCountLabel;
             public Slider ModelScale;
             public TextMeshProUGUI ModelScaleLabel;
             public Button ResetTransformButton;
@@ -166,6 +173,13 @@ namespace Dicom.UI.EditorTools
                 // 按钮内标签(CreateButton 建了名为 Text 的居中标签)
                 r.TopGeneLabels[i] = btn.GetComponentInChildren<TextMeshProUGUI>(true);
             }
+
+            // 区域内基因搜索:分析后可查任意基因在本选区的画取占比(补 Top5 之外)
+            CreateLabel("RegionSearchTitle", region, "搜索基因查画取占比", 20f, LabelHeight).color = TextMuted;
+            r.RegionSearchKeywordLabel = CreateLabel("RegionSearchKeyword", region, "关键字: (空)", 22f, LabelHeight);
+            r.RegionKeyButtons = CreateKeyboard(region, out r.RegionBackspaceButton, out r.RegionClearKeywordButton);
+            r.RegionSearchResultCountLabel = CreateLabel("RegionSearchCount", region, "", 20f, LabelHeight);
+            r.RegionSearchResultContent = CreateResultList(region, out r.RegionSearchResultTemplate);
 
             var transform = CreateSection(content, "模型变换", true);
             r.ModelScaleLabel = CreateLabel("ModelScaleLabel", transform, "模型缩放", 20f, LabelHeight);
@@ -255,6 +269,13 @@ namespace Dicom.UI.EditorTools
             Set(so, "_regionNameLabel", r.RegionNameLabel);
             SetArray(so, "_topGeneButtons", r.TopGeneButtons);
             SetArray(so, "_topGeneLabels", r.TopGeneLabels);
+            Set(so, "_regionSearchKeywordLabel", r.RegionSearchKeywordLabel);
+            SetArray(so, "_regionKeyButtons", r.RegionKeyButtons);
+            Set(so, "_regionBackspaceButton", r.RegionBackspaceButton);
+            Set(so, "_regionClearKeywordButton", r.RegionClearKeywordButton);
+            Set(so, "_regionSearchResultContent", r.RegionSearchResultContent);
+            Set(so, "_regionSearchResultTemplate", r.RegionSearchResultTemplate);
+            Set(so, "_regionSearchResultCountLabel", r.RegionSearchResultCountLabel);
             Set(so, "_modelScaleSlider", r.ModelScale);
             Set(so, "_modelScaleLabel", r.ModelScaleLabel);
             Set(so, "_resetTransformButton", r.ResetTransformButton);

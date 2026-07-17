@@ -75,6 +75,16 @@ namespace Dicom.Gene
         [SerializeField] Button[] _topGeneButtons;
         [SerializeField] TextMeshProUGUI[] _topGeneLabels;
 
+        [Header("区域内基因搜索")]
+        // 分析后查任意基因在本选区的画取占比(补 Top5 之外),独立于顶部基因搜索
+        [SerializeField] TextMeshProUGUI _regionSearchKeywordLabel;
+        [SerializeField] Button[] _regionKeyButtons;
+        [SerializeField] Button _regionBackspaceButton;
+        [SerializeField] Button _regionClearKeywordButton;
+        [SerializeField] RectTransform _regionSearchResultContent;
+        [SerializeField] Button _regionSearchResultTemplate;
+        [SerializeField] TextMeshProUGUI _regionSearchResultCountLabel;
+
         [Header("模型变换")]
         [SerializeField] Slider _modelScaleSlider;
         [SerializeField] TextMeshProUGUI _modelScaleLabel;
@@ -102,6 +112,10 @@ namespace Dicom.Gene
         GeneRegionReport _report;
         // 最近一次 top 基因结果,供按钮点击取基因名
         string[] _topGeneNames;
+
+        // 区域内搜索:当前关键字 + 结果按钮对象池(复用模板 Instantiate 的副本)
+        string _regionKeyword = "";
+        readonly List<Button> _regionResultPool = new List<Button>();
 
         bool _dataSourceBound;
         float _autoBindElapsed;
@@ -231,6 +245,7 @@ namespace Dicom.Gene
                 }
             }
 
+            SetupRegionSearchControls();
             RefreshRegionResult();
         }
 
@@ -589,6 +604,9 @@ namespace Dicom.Gene
                     _topGeneLabels[i].text = $"{i + 1}. {g.Gene}  {g.MeanExpression:F3}";
                 }
             }
+
+            // 报告更新(分析完成/清除)后刷新区域搜索:占比换算随新选区,或回到"先分析"提示
+            RefreshRegionSearchResults();
         }
 
         void OnTopGeneClicked(int idx)
@@ -598,6 +616,146 @@ namespace Dicom.Gene
             if (_brush != null) _brush.SetEnabled(false);
             if (_brushToggle != null) _brushToggle.SetIsOnWithoutNotify(false);
             _controller.SelectGene(_topGeneNames[idx]);
+        }
+
+        // === 区域内基因搜索(查任意基因画取占比) ===
+        // 绑定虚拟键盘、退格/清空、隐藏结果模板;运行时绑因编辑器期监听不持久
+        void SetupRegionSearchControls()
+        {
+            if (_regionKeyButtons != null)
+            {
+                foreach (var key in _regionKeyButtons)
+                {
+                    if (key == null) continue;
+                    var label = key.GetComponentInChildren<TextMeshProUGUI>(true);
+                    if (label == null || string.IsNullOrEmpty(label.text)) continue;
+                    char c = label.text[0];
+                    key.onClick.AddListener(() => AppendRegionKeyword(c));
+                }
+            }
+            if (_regionBackspaceButton != null) _regionBackspaceButton.onClick.AddListener(OnRegionBackspace);
+            if (_regionClearKeywordButton != null) _regionClearKeywordButton.onClick.AddListener(OnRegionClearKeyword);
+            if (_regionSearchResultTemplate != null) _regionSearchResultTemplate.gameObject.SetActive(false);
+
+            RefreshRegionKeywordLabel();
+            RefreshRegionSearchResults();
+        }
+
+        void AppendRegionKeyword(char c)
+        {
+            _regionKeyword += c;
+            RefreshRegionKeywordLabel();
+            RefreshRegionSearchResults();
+        }
+
+        void OnRegionBackspace()
+        {
+            if (_regionKeyword.Length == 0) return;
+            _regionKeyword = _regionKeyword.Substring(0, _regionKeyword.Length - 1);
+            RefreshRegionKeywordLabel();
+            RefreshRegionSearchResults();
+        }
+
+        void OnRegionClearKeyword()
+        {
+            if (_regionKeyword.Length == 0) return;
+            _regionKeyword = "";
+            RefreshRegionKeywordLabel();
+            RefreshRegionSearchResults();
+        }
+
+        void RefreshRegionKeywordLabel()
+        {
+            if (_regionSearchKeywordLabel == null) return;
+            _regionSearchKeywordLabel.text = string.IsNullOrEmpty(_regionKeyword)
+                ? "关键字: (空)"
+                : $"关键字: {_regionKeyword}";
+        }
+
+        // 增量过滤:关键字子串匹配全基因名,结果按钮显示"基因名  画取占比%";未分析提示先分析
+        void RefreshRegionSearchResults()
+        {
+            if (_report == null)
+            {
+                HideAllRegionResultButtons();
+                if (_regionSearchResultCountLabel != null) _regionSearchResultCountLabel.text = "请先分析区域";
+                return;
+            }
+            if (string.IsNullOrEmpty(_regionKeyword) || _genesLower == null)
+            {
+                HideAllRegionResultButtons();
+                if (_regionSearchResultCountLabel != null) _regionSearchResultCountLabel.text = "";
+                return;
+            }
+
+            string kw = _regionKeyword.ToLowerInvariant();
+            int shown = 0;
+            int matched = 0;
+            for (int i = 0; i < _genesLower.Length; i++)
+            {
+                if (_genesLower[i].IndexOf(kw, StringComparison.Ordinal) < 0) continue;
+                matched++;
+                if (shown >= MaxResults) continue;
+                BindRegionResultButton(shown, _genes[i]);
+                shown++;
+            }
+
+            for (int i = shown; i < _regionResultPool.Count; i++)
+                if (_regionResultPool[i] != null) _regionResultPool[i].gameObject.SetActive(false);
+
+            if (_regionSearchResultCountLabel != null)
+                _regionSearchResultCountLabel.text = matched == 0
+                    ? "无匹配基因"
+                    : (matched > MaxResults
+                        ? $"匹配 {matched} 条,显示前 {MaxResults},输入更多缩小范围"
+                        : $"匹配 {matched} 条");
+        }
+
+        // 取/建第 idx 个池按钮,文字为"基因名  占比%",点击选中该基因(同 Top5 路径)
+        void BindRegionResultButton(int idx, string name)
+        {
+            var btn = GetOrCreateRegionPooledButton(idx);
+            if (btn == null) return;
+            var label = btn.GetComponentInChildren<TextMeshProUGUI>(true);
+            if (label != null) label.text = $"{name}  {FormatPaintFraction(name)}";
+            btn.onClick.RemoveAllListeners();
+            btn.onClick.AddListener(() => OnRegionSearchResultClicked(name));
+            btn.gameObject.SetActive(true);
+        }
+
+        // 画取占比文本:-1(全模型无表达)显示"无表达",否则百分比
+        string FormatPaintFraction(string gene)
+        {
+            if (_report == null || !_report.PaintFractions.TryGetValue(gene, out float frac))
+                return "-";
+            return frac < 0f ? "无表达" : $"{frac * 100f:F1}%";
+        }
+
+        Button GetOrCreateRegionPooledButton(int idx)
+        {
+            if (_regionSearchResultTemplate == null || _regionSearchResultContent == null) return null;
+            while (_regionResultPool.Count <= idx)
+            {
+                var clone = Instantiate(_regionSearchResultTemplate, _regionSearchResultContent);
+                clone.gameObject.SetActive(false);
+                _regionResultPool.Add(clone);
+            }
+            return _regionResultPool[idx];
+        }
+
+        void HideAllRegionResultButtons()
+        {
+            foreach (var b in _regionResultPool)
+                if (b != null) b.gameObject.SetActive(false);
+        }
+
+        // 点结果:与 Top5 点击同路径,关画笔露出区域表达显色
+        void OnRegionSearchResultClicked(string name)
+        {
+            if (_controller == null || string.IsNullOrEmpty(name)) return;
+            if (_brush != null) _brush.SetEnabled(false);
+            if (_brushToggle != null) _brushToggle.SetIsOnWithoutNotify(false);
+            _controller.SelectGene(name);
         }
 
         // === 模型变换 ===

@@ -188,6 +188,7 @@ namespace Dicom.Gene
             string geneName = Path.GetFileNameWithoutExtension(path);
             float min = float.MaxValue;
             float max = float.MinValue;
+            int expressed = 0;
 
             using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16))
             using (var sr = new StreamReader(stream))
@@ -221,6 +222,8 @@ namespace Dicom.Gene
                                 values[cellId] = v;
                                 if (v < min) min = v;
                                 if (v > max) max = v;
+                                // 表达 = 值 > 0,统计供区域画取比例分母
+                                if (v > 0f) expressed++;
                             }
                         }
                     }
@@ -235,7 +238,7 @@ namespace Dicom.Gene
             // 全空文件兜底,避免归一化除零
             if (min > max) { min = 0f; max = 1f; }
 
-            return new GeneExpression { GeneName = geneName, Values = values, Min = min, Max = max };
+            return new GeneExpression { GeneName = geneName, Values = values, Min = min, Max = max, ExpressedCount = expressed };
         }
 
         // 文件位置比例,clamp 到 0..1(不引 UnityEngine.Mathf,后台线程纯 C#)

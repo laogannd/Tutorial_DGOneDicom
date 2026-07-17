@@ -152,4 +152,62 @@ namespace Dicom.Gene
             }
         }
     }
+
+    // 幽灵点云构建:取未画取 cell(mask==0;无掩码=全部)写恒定强度 + Selected=0(走淡显 Pass)
+    // 供 GeneBrushVisual 底图:全模型未画区域暗淡灰白,已画处由高亮 overlay 亮色透出,一眼看清漏哪
+    // 结构同 overlay 两遍式,取反掩码即可
+
+    // ghost 第一遍:每块统计未画取(mask==0 或无掩码)cell 数
+    [BurstCompile]
+    public struct GeneGhostCountJob : IJobParallelFor
+    {
+        [ReadOnly] public NativeArray<byte> Mask;   // 长度 0 表示无掩码(全部视为未画)
+        public int BlockSize;
+        public int CellCount;
+        [WriteOnly] public NativeArray<int> BlockCounts;
+
+        public void Execute(int block)
+        {
+            int start = block * BlockSize;
+            int end = math.min(start + BlockSize, CellCount);
+            bool useMask = Mask.Length > 0;
+            int count = 0;
+            for (int i = start; i < end; i++)
+                if (!useMask || Mask[i] == 0) count++;
+            BlockCounts[block] = count;
+        }
+    }
+
+    // ghost 第二遍:每块把未画取 cell 写入专属区段,恒定强度,Selected=0 走半透明淡显 Pass
+    [BurstCompile]
+    public struct GeneGhostWriteJob : IJobParallelFor
+    {
+        [ReadOnly] public NativeArray<float3> CellPos;
+        [ReadOnly] public NativeArray<byte> Mask;
+        [ReadOnly] public NativeArray<int> BlockOffsets;
+        public int BlockSize;
+        public int CellCount;
+        public float Intensity;
+
+        [NativeDisableParallelForRestriction] public NativeArray<DicomPoint> Points;
+
+        public void Execute(int block)
+        {
+            int start = block * BlockSize;
+            int end = math.min(start + BlockSize, CellCount);
+            int write = BlockOffsets[block];
+            bool useMask = Mask.Length > 0;
+            for (int i = start; i < end; i++)
+            {
+                if (useMask && Mask[i] != 0) continue;
+                Points[write++] = new DicomPoint
+                {
+                    Position = CellPos[i],
+                    Intensity = Intensity,
+                    ClassId = -1f,
+                    Selected = 0f
+                };
+            }
+        }
+    }
 }

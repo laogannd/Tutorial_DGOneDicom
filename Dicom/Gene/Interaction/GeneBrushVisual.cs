@@ -43,10 +43,26 @@ namespace Dicom.Gene
 
         Camera _camera;
         DicomPointCloud _overlay;
+        // 未画区域幽灵底图:全模型未画 cell 暗淡灰白显示,已画处点消失露出空洞,一眼看清漏哪
+        // 仅画笔开且未选基因时显示(选基因时主点云已铺全模型淡显,幽灵冗余);近 13.6 万点故节流重建
+        DicomPointCloud _ghost;
+        bool _ghostDirty;
+        float _ghostNextRebuild;
         readonly StringBuilder _sb = new StringBuilder(256);
+
+        // 幽灵点:恒定强度(Intensity 模式下配灰色 Tint 得暗淡灰白)+ 低不透明度 + 略小点尺寸
+        [SerializeField] float _ghostIntensity = 0.7f;
+        [SerializeField, Range(0f, 1f)] float _ghostAlpha = 0.16f;
+        [SerializeField] float _ghostPointSize = 0.0018f;
+        [SerializeField] Color _ghostTint = new Color(0.6f, 0.62f, 0.66f, 1f);
+        // 幽灵重建最小间隔(秒):选区变化置脏,Update 里按此节流重建,避免每笔刷帧重建 13.6 万点抖动
+        [SerializeField] float _ghostRebuildInterval = 0.25f;
 
         // 区域文本字体:由 Bootstrap/面板注入(项目中文字体);为空则运行时回退解析
         TMP_FontAsset _injectedFont;
+
+        // 组件销毁中:辅助根物体(球/文本/线)将被销毁,期间任何延迟回调(选区变化)须早退,防访问已毁 Transform
+        bool _destroyed;
 
         // 当前区域:是否有内容、质心世界坐标、文本世界坐标、主导色(供每帧 billboard/指向线)
         bool _hasRegion;
@@ -73,11 +89,14 @@ namespace Dicom.Gene
 
         void OnDestroy()
         {
+            _destroyed = true;
             if (_brush != null) _brush.OnSelectionChanged -= OnSelectionChanged;
             // 指示球/文本/指向线是场景根物体(非子物体),须显式销毁避免残留
             if (_sphere != null) Destroy(_sphere.gameObject);
             if (_label != null) Destroy(_label.gameObject);
             if (_line != null) Destroy(_line.gameObject);
+            // 幽灵是子物体随本物体销毁,但显式清理更稳妥
+            if (_ghost != null) Destroy(_ghost.gameObject);
             if (_sphereMaterial != null) Destroy(_sphereMaterial);
             if (_lineMaterial != null) Destroy(_lineMaterial);
         }
@@ -85,19 +104,21 @@ namespace Dicom.Gene
         // 选中集变化后:选了基因清 overlay(主点云表达色透出),未选基因才恒定高亮;并刷新区域文本
         void OnSelectionChanged(int count)
         {
-            if (!_brush.BrushEnabled) return;
+            if (_destroyed || _brush == null || !_brush.BrushEnabled) return;
 
             if (_controller.CurrentGene != null)
             {
-                // 已有表达值:主点云 RebuildPoints 已用真实 LUT 表达色渲染选中 cell,overlay 会盖掉,故清空
+                // 已有表达值:主点云 RebuildPoints 已用真实 LUT 表达色渲染选中 cell,overlay/幽灵会盖掉,故清空
                 if (_overlay != null && _overlay.PointCount > 0) _overlay.SetPoints(default, 0);
+                if (_ghost != null && _ghost.PointCount > 0) _ghost.SetPoints(default, 0);
             }
             else
             {
-                // 无基因可映射:用 overlay 恒定强度高亮选区作反馈
+                // 无基因可映射:用 overlay 恒定强度即时高亮选区(量小),幽灵底图节流重建标脏
                 EnsureOverlay();
                 _controller.BuildOverlay(_overlay, 1f);
                 _controller.ApplyColorState(_overlay);
+                _ghostDirty = true;
             }
 
             RefreshRegionLabel();
@@ -110,12 +131,35 @@ namespace Dicom.Gene
                 SetSphereActive(false);
                 HideRegion();
                 if (_overlay != null && _overlay.PointCount > 0) _overlay.SetPoints(default, 0);
+                if (_ghost != null && _ghost.PointCount > 0) _ghost.SetPoints(default, 0);
                 return;
             }
 
             UpdateBrushCursor();
+            UpdateGhost();
             // 质心固定,但相机会动:每帧让区域文本朝相机
             if (_hasRegion) BillboardRegionLabel();
+        }
+
+        // 幽灵底图:仅画笔开且未选基因时显示(选基因时主点云已铺全模型淡显);节流重建避免每帧 13.6 万点抖动
+        // 首次进入(未画/无掩码)也须建一次,让全模型未画区域立即以灰白呈现
+        void UpdateGhost()
+        {
+            if (_controller.CurrentGene != null)
+            {
+                if (_ghost != null && _ghost.PointCount > 0) _ghost.SetPoints(default, 0);
+                return;
+            }
+
+            // 未选基因:确保幽灵存在;首帧强制建一次(PointCount==0 且未标脏也建),之后按脏标+节流重建
+            EnsureGhost();
+            bool firstBuild = _ghost != null && _ghost.PointCount == 0;
+            if ((_ghostDirty || firstBuild) && Time.unscaledTime >= _ghostNextRebuild)
+            {
+                _ghostDirty = false;
+                _ghostNextRebuild = Time.unscaledTime + _ghostRebuildInterval;
+                _controller.BuildGhost(_ghost, _ghostIntensity);
+            }
         }
 
         // 指示球跟随笔刷球心:直径=2*半径,颜色随最近所属部位;染色中更实,悬停淡
@@ -140,8 +184,11 @@ namespace Dicom.Gene
         // 汇总选中区域全部 tag(主导优先+占比)刷新空间文本,指向线连质心;无选中隐藏
         void RefreshRegionLabel()
         {
+            if (_destroyed) return;
             EnsureLabel();
             EnsureLine();
+            // Ensure 后仍可能因外部销毁/资源剥离而缺失,拿不到有效对象直接安全退出,不访问已毁 Transform
+            if (_label == null || _labelText == null || _line == null) return;
 
             if (!_controller.CollectRegionSummary(out var shares, out Vector3 localCentroid, out int total)
                 || total == 0)
@@ -216,6 +263,31 @@ namespace Dicom.Gene
             if (_mainCloud != null && _mainCloud.Material != null)
                 _overlay.SetMaterial(_mainCloud.Material);
             _overlay.SetPointSize(_overlayPointSize);
+        }
+
+        // 幽灵点云挂子物体,identity 局部变换 -> 与主点云同一 local->world,cell local 坐标直接对齐
+        // 复用主材质,但显色态独立:Intensity 模式 + 灰色 Tint + 低 alpha,得暗淡去饱和灰白底图
+        void EnsureGhost()
+        {
+            if (_ghost != null) return;
+
+            var go = new GameObject("GeneUnpaintedGhost");
+            go.transform.SetParent(transform, false);
+            go.transform.localPosition = Vector3.zero;
+            go.transform.localRotation = Quaternion.identity;
+            go.transform.localScale = Vector3.one;
+
+            _ghost = go.AddComponent<DicomPointCloud>();
+            if (_mainCloud != null && _mainCloud.Material != null)
+                _ghost.SetMaterial(_mainCloud.Material);
+            _ghost.SetPointSize(_ghostPointSize);
+            // Intensity 模式:color = saturate(g*gain)*tint;窗宽窗位全通使 g=intensity,tint 灰得暗淡灰白
+            _ghost.SetColorMode((float)Dicom.PointCloud.DicomColorMode.Intensity);
+            _ghost.SetWindow(0.5f, 1f);
+            _ghost.SetNormalize(0f, 1f);
+            _ghost.SetTint(_ghostTint.r, _ghostTint.g, _ghostTint.b, 1f);
+            // 幽灵点全 Selected=0,走淡显 Pass 按此 alpha 半透明
+            _ghost.SetAlpha(_ghostAlpha);
         }
 
         // 指示球:内置 Sphere primitive,去碰撞体,场景根物体(不随点云缩放),半透明置顶材质

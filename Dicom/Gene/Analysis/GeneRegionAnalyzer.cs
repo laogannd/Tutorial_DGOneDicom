@@ -31,6 +31,13 @@ namespace Dicom.Gene
                     if (g == null) continue;
                     float mean = MeanOverSelection(g.Values, selectedIds);
                     scores.Add(new GeneRegionReport.GeneScore { Gene = g.GeneName, MeanExpression = mean });
+
+                    // 画取比例 = 选区内表达该基因(v>0)的 cell 数 / 全模型表达该基因的 cell 数
+                    // 全模型无表达(分母 0)记 -1,搜索时显示"无表达"
+                    int expressedInSel = CountExpressedInSelection(g.Values, selectedIds);
+                    report.PaintFractions[g.GeneName] = g.ExpressedCount > 0
+                        ? (float)expressedInSel / g.ExpressedCount
+                        : -1f;
                 }
 
                 scores.Sort((a, b) => b.MeanExpression.CompareTo(a.MeanExpression));
@@ -56,6 +63,20 @@ namespace Dicom.Gene
                 if (c > bestCount) { bestCount = c; best = t; }
             }
             return best;
+        }
+
+        // 数选区内表达该基因(值非 NaN 且 > 0)的 cell 数,供画取比例分子
+        static int CountExpressedInSelection(float[] values, int[] ids)
+        {
+            int n = 0;
+            for (int i = 0; i < ids.Length; i++)
+            {
+                int id = ids[i];
+                if (id < 0 || id >= values.Length) continue;
+                float v = values[id];
+                if (!float.IsNaN(v) && v > 0f) n++;
+            }
+            return n;
         }
 
         // 对选中 cell 求表达均值,跳过 NaN(缺失 cell);全 NaN 返回 0
