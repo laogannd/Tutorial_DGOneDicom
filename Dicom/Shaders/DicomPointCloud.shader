@@ -126,6 +126,9 @@ Shader "Dicom/PointCloud"
             // 选中 Pass 标 SRPDefaultUnlit(tag 列表在前,先画占深度)
             Tags { "LightMode"="SRPDefaultUnlit" }
             Cull Off
+            // 已画取点老实做深度测试(默认 LEqual):被手/面板等真实几何正常遮挡,不置顶。
+            // 幽灵底图在每个 cell 有深度相等的孪生点,LEqual 下已画取点在自身表面恒压过孪生点保持清晰;
+            // 仅当真有未画取组织挡在相机与已画区域之间时,才被那层组织按覆盖率半透遮挡(物理正确)
             ZWrite On
             Blend One Zero
             HLSLPROGRAM
@@ -145,8 +148,11 @@ Shader "Dicom/PointCloud"
             // 否则同 LightMode 下此 Pass 被静默丢弃,全部 Selected=0 的点(幽灵底图/未选淡显)不显示
             Tags { "LightMode"="UniversalForward" }
             Cull Off
-            ZWrite Off
-            Blend SrcAlpha OneMinusSrcAlpha
+            // 顺序无关透明:写深度使近点遮后点(消除视角相关"空心内壁"),
+            // AlphaToMask 把 alpha 转成 MSAA 覆盖率抖动实现半透明,不再依赖混合的绘制顺序
+            ZWrite On
+            AlphaToMask On
+            Blend One Zero
             HLSLPROGRAM
             #pragma vertex vert
             #pragma fragment frag
@@ -270,6 +276,7 @@ Shader "Dicom/PointCloud"
         {
             Name "DicomSelectedBuiltin"
             Cull Off
+            // 已画取点老实做深度测试(默认 LEqual):被真实几何正常遮挡,不置顶;孪生点深度相等故自身表面恒清晰
             ZWrite On
             Blend One Zero
             CGPROGRAM
@@ -284,8 +291,10 @@ Shader "Dicom/PointCloud"
         {
             Name "DicomFadedBuiltin"
             Cull Off
-            ZWrite Off
-            Blend SrcAlpha OneMinusSrcAlpha
+            // 顺序无关透明:写深度 + AlphaToMask 覆盖率抖动,消除视角相关"空心内壁"
+            ZWrite On
+            AlphaToMask On
+            Blend One Zero
             CGPROGRAM
             #pragma vertex vert
             #pragma fragment frag

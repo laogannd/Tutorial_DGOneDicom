@@ -25,8 +25,9 @@ namespace Dicom.Gene
         [SerializeField] bool _autoLoadOnStart = false;
         // 加载完成后自动选中的默认基因(空则不自动选,由面板选)
         [SerializeField] string _defaultGene = "";
-        // 未画取区域(灰色幽灵底图)淡显不透明度(0=近全透,1=不透明);点云密集叠加会累积,取低值才真透
-        [SerializeField, Range(0f, 1f)] float _selectionFadeAlpha = 0.12f;
+        // 未画取区域(灰色幽灵底图)淡显不透明度(0=近全透,1=不透明);现走 alpha-to-coverage 抖动透明,
+        // 有效显示密度约等于此值,MSAA=2 下低于 0.25 会几乎不可见,故起点取 0.35
+        [SerializeField, Range(0f, 1f)] float _selectionFadeAlpha = 0.35f;
         [SerializeField] bool _attachDebugPanel = true;
 
         GeneColorController _controller;

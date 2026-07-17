@@ -59,7 +59,8 @@ namespace Dicom.Gene
         // 幽灵是"未画取"底图:点云沿视线密集叠加,单点 alpha 会累积成近不透明,故取低值(约 0.12)
         // 才真正透出背景显得稀疏透明;点也做小,已画取的主点云点更大更密更醒目,一眼分清画没画
         [SerializeField] float _ghostIntensity = 1f;
-        [SerializeField, Range(0f, 1f)] float _ghostAlpha = 0.12f;
+        // 幽灵底图走 alpha-to-coverage 抖动透明:有效显示密度约等于此 alpha,MSAA=2 下低于 0.25 会几乎不可见,故默认 0.35
+        [SerializeField, Range(0f, 1f)] float _ghostAlpha = 0.35f;
         [SerializeField] float _ghostPointSize = 0.0022f;
         [SerializeField] Color _ghostTint = new Color(0.7f, 0.74f, 0.82f, 1f);
         // 幽灵材质 renderQueue:比主点云(Transparent=3000)略低,确保先画在最底层,被上层已画彩色点覆盖

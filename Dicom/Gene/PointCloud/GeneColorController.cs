@@ -27,7 +27,8 @@ namespace Dicom.Gene
         [SerializeField] DicomLutProfile _lutProfile;
 
         // 未画取区域淡显不透明度(0=全透明,1=不透明);由 Bootstrap 注入,面板可实时调;现驱动灰色幽灵底图
-        [SerializeField, Range(0f, 1f)] float _selectionFade = 0.12f;
+        // 幽灵底图现走 alpha-to-coverage 抖动透明,有效显示密度约等于此值:MSAA=2 下过低(<0.25)会几乎不可见,故起点取 0.35
+        [SerializeField, Range(0f, 1f)] float _selectionFade = 0.35f;
 
         // 加载完成(携带 local 尺寸信息)
         public event Action<GeneModelData> OnLoaded;
