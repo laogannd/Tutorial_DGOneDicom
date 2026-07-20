@@ -191,9 +191,9 @@ namespace Dicom.Gene
         }
     }
 
-    // 幽灵点云构建(选中基因):未画取底图按表达值走 Cividis 半透明。渲染有表达值(非 NaN)的全部 cell,
-    // 每 cell 写归一化表达强度 + Selected=0(走淡显 Pass,由 GeneBrushVisual 设 Cividis LUT + 可量化 alpha)。
-    // 已画取的 cell 由主点云(当前配色不透明)叠在上层覆盖,得"已画不透明 + 未画 Cividis 透明"效果。
+    // 幽灵点云构建(选中基因):未画取底图按表达值走主点云同款配色半透明。渲染有表达值(非 NaN)的全部 cell,
+    // 每 cell 写归一化表达强度 + Selected=0(走淡显 Pass,由 GeneBrushVisual 复制主点云 LUT + 可量化 alpha)。
+    // 已画取的 cell 由主点云(当前配色不透明)叠在上层覆盖,得"已画不透明 + 未画同配色透明"效果。
     // 与掩码无关(全表达 cell 都画,画取的被主点云盖住),故只随基因切换重建,不随每笔画取重建。
     // 跳过 NaN 故非全量,需计数(复用 GeneCountJob 传零长掩码)+ 前缀和后各块写专属区段
     [BurstCompile]

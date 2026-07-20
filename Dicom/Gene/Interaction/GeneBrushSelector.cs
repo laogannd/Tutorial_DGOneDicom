@@ -116,7 +116,7 @@ namespace Dicom.Gene
             FindHand(out bool hasHand, out bool pinching, out Vector3 center);
 
             _hasBrushCenter = hasHand;
-            // 捏合起止边沿:激活即进入过滤模式(空掩码露 Cividis 底图),松开且选区空则回查看全部
+            // 捏合起止边沿:激活即进入过滤模式(空掩码露幽灵底图),松开且选区空则回查看全部
             bool wasPainting = _painting;
             _painting = pinching;
             if (pinching && !wasPainting) OnPaintingStarted();
@@ -136,7 +136,7 @@ namespace Dicom.Gene
         }
 
         // 捏合激活:确保掩码存在(空掩码即进入过滤模式),重建主点云使其只渲染已画取 cell。
-        // 此刻尚未画取故主点云清空,整模型露出 Cividis 半透明底图,随后扫过的 cell 变不透明彩色
+        // 此刻尚未画取故主点云清空,整模型露出主点云同配色半透明底图,随后扫过的 cell 变不透明彩色
         void OnPaintingStarted()
         {
             _controller.EnsureMask();

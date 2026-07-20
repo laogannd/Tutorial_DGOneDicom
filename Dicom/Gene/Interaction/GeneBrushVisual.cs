@@ -66,12 +66,7 @@ namespace Dicom.Gene
         // 幽灵材质 renderQueue:比主点云(Transparent=3000)略低,确保先画在最底层,被上层已画彩色点覆盖
         const int GhostRenderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent - 1;
 
-        // 未画取底图的 Cividis 色表(蓝-灰-黄,红绿色盲友好):选中基因时幽灵按表达值走此表半透明呈现。
-        // 运行时实例化 DicomLutProfile 副本(不引用共享资产),烘焙一次纹理复用,OnDestroy 释放
-        DicomLutProfile _cividisProfile;
-        // Cividis 色阶数:表达底图作背景,取较密色阶得平滑过渡
-        [SerializeField, Range(2, 256)] int _cividisSteps = 64;
-        // 上次幽灵重建时是否处于"选中基因"态:与当前不一致则强制重建,切换 Cividis/灰白配色
+        // 上次幽灵重建时是否处于"选中基因"态:与当前不一致则强制重建,切换 主点云配色/灰白配色
         bool _ghostBuiltWithGene;
 
         // 区域文本字体:由 Bootstrap/面板注入(项目中文字体);为空则运行时回退解析
@@ -103,7 +98,7 @@ namespace Dicom.Gene
             _brush.OnSelectionChanged += OnSelectionChanged;
             // 模型(重)加载后幽灵底图须按新模型全量 cell 重建
             _controller.OnLoaded += OnModelLoaded;
-            // 切基因后未画取底图须按新基因表达值重建 Cividis 底图
+            // 切基因后未画取底图须按新基因表达值重建(并复制新的主点云配色)
             _controller.OnGeneChanged += OnGeneChanged;
             // "未画取淡显"值现由幽灵底图承载:面板/Bootstrap 调 SelectionFade 时实时刷幽灵 alpha
             _controller.OnSelectionFadeChanged += OnSelectionFadeChanged;
@@ -139,12 +134,6 @@ namespace Dicom.Gene
             if (_lineMaterial != null) Destroy(_lineMaterial);
             // 幽灵材质是主材质的运行时副本(为独立 renderQueue),须显式销毁
             if (_ghostMaterial != null) Destroy(_ghostMaterial);
-            // Cividis 色表是运行时实例化副本,连同烘焙纹理一并销毁
-            if (_cividisProfile != null)
-            {
-                _cividisProfile.DestroyBaked();
-                Destroy(_cividisProfile);
-            }
         }
 
         // 模型(重)加载:置脏使幽灵底图按新模型全量 cell 重建(下次显示时)
@@ -154,7 +143,7 @@ namespace Dicom.Gene
             _ghostDirty = true;
         }
 
-        // 切基因:置脏使未画取底图按新基因表达值重建 Cividis 半透明底图
+        // 切基因:置脏使未画取底图按新基因表达值重建(复制新主点云配色的半透明底图)
         void OnGeneChanged(string _)
         {
             if (_destroyed) return;
@@ -208,7 +197,7 @@ namespace Dicom.Gene
             EnsureGhost();
             if (_ghost == null) return;
 
-            // 基因态与上次构建不一致(选中<->未选中切换)也须重建,以切换 Cividis/灰白配色
+            // 基因态与上次构建不一致(选中<->未选中切换)也须重建,以切换 主点云配色/灰白配色
             bool hasGene = _controller.CurrentGene != null;
             bool needRebuild = _ghostDirty || _ghost.PointCount == 0 || hasGene != _ghostBuiltWithGene;
 
@@ -216,19 +205,20 @@ namespace Dicom.Gene
             {
                 _ghostDirty = false;
                 _ghostBuiltWithGene = hasGene;
-                // 先按当前基因态设配色(选中走 Cividis LUT,未选走灰白 Intensity),再构建点集
+                // 先按当前基因态设配色(选中复制主点云 LUT,未选走灰白 Intensity),再构建点集
                 ApplyGhostColorScheme(hasGene);
                 _controller.BuildGhost(_ghost, _ghostIntensity);
             }
 
-            // 仅过滤模式(捏合中或已有选区)显示 Cividis 底图:此时主点云只渲染已画取 cell,未画取交给底图。
+            // 仅过滤模式(捏合中或已有选区)显示底图:此时主点云只渲染已画取 cell,未画取交给底图。
             // 查看全部(无捏合无选区)时主点云全量不透明会完全遮住底图,隐藏它免无谓绘制
             bool filterMode = _brush.Painting || _brush.SelectedCount > 0;
             SetGhostActive(filterMode && _ghost.PointCount > 0);
         }
 
         // 按是否选中基因设幽灵底图配色:
-        // 选中 -> Cividis LUT 模式,窗宽窗位全通使采样位置=归一化表达值,得表达值到 Cividis 的映射;
+        // 选中 -> 复制主点云当前显色态(同一 LUT 纹理/颜色模式/窗宽窗位/归一化),使未画取底图与已画取彩色点
+        //   完全同一配色方案(主点云 _lutProfile),只靠 alpha 半透明抖动区分画没画,不再另用 Cividis 色系;
         // 未选 -> Intensity 模式 + 灰色 Tint(旧全模型灰白底图行为)。两者都用可量化 alpha(SelectionFade)
         void ApplyGhostColorScheme(bool hasGene)
         {
@@ -236,11 +226,8 @@ namespace Dicom.Gene
 
             if (hasGene)
             {
-                var lut = EnsureCividisTexture();
-                if (lut != null) _ghost.SetLutTexture(lut);
-                _ghost.SetColorMode((float)DicomColorMode.Lut);
-                _ghost.SetWindow(0.5f, 1f);
-                _ghost.SetTint(1f, 1f, 1f, 1f);
+                // CopyColorStateTo 复制显色态但不动 alpha,故幽灵保持自身半透明感,配色则与主点云一致
+                _controller.ApplyColorState(_ghost);
             }
             else
             {
@@ -250,18 +237,6 @@ namespace Dicom.Gene
                 _ghost.SetTint(_ghostTint.r, _ghostTint.g, _ghostTint.b, 1f);
             }
             _ghost.SetAlpha(_ghostAlpha);
-        }
-
-        // 懒建 Cividis 色表运行时副本并烘焙纹理(复用),供未画取表达底图采样
-        Texture EnsureCividisTexture()
-        {
-            if (_cividisProfile == null)
-            {
-                _cividisProfile = ScriptableObject.CreateInstance<DicomLutProfile>();
-                _cividisProfile.SetPreset(DicomLutProfile.LutPreset.Cividis);
-                _cividisProfile.SetSteps(_cividisSteps);
-            }
-            return _cividisProfile.BakeLut();
         }
 
         void SetGhostActive(bool on)
@@ -400,7 +375,7 @@ namespace Dicom.Gene
             }
             _ghost.SetPointSize(_ghostPointSize);
             // 幽灵点全 Selected=0,走淡显 Pass 按此 alpha 半透明;
-            // 具体配色(选基因 Cividis LUT / 未选灰白 Intensity)由 ApplyGhostColorScheme 每次重建时按基因态设置
+            // 具体配色(选基因复制主点云 LUT / 未选灰白 Intensity)由 ApplyGhostColorScheme 每次重建时按基因态设置
             _ghost.SetAlpha(_ghostAlpha);
         }
 

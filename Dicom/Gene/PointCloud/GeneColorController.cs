@@ -289,7 +289,7 @@ namespace Dicom.Gene
                 {
                     _pointCloud.SetPoints(default, 0);
                     _report.PointCount = 0;
-                    // 过滤模式(有掩码)下选区暂空(如捏合刚激活尚未画取):主点云清空露出 Cividis 底图,
+                    // 过滤模式(有掩码)下选区暂空(如捏合刚激活尚未画取):主点云清空露出幽灵底图,
                     // 但保留上次全表达 AABB,防碰撞盒/线框瞬间塌缩;仅查看全部(无掩码)确无可见 cell 时才归零
                     if (!_mask.IsCreated)
                     {
@@ -568,7 +568,7 @@ namespace Dicom.Gene
 
         // 把未画取底图构建成幽灵点集写入指定 DicomPointCloud(全 Selected=0,走淡显 Pass)。
         // 选中基因:只渲染有表达值(非 NaN)的 cell,每 cell 写归一化表达强度,交 GeneBrushVisual 设
-        //   Cividis LUT + 可量化 alpha,得"未画取区域按表达值走 Cividis 半透明"效果;
+        //   主点云同款 LUT + 可量化 alpha,得"未画取区域按表达值走主点云配色半透明"效果;
         // 未选基因(无表达值可映射):回退全模型恒定强度灰白底图(旧行为)。
         // 与掩码无关(画取的 cell 也在底图里,被主点云不透明彩色叠上层盖住),故只随基因/模型切换重建,不随选区重建
         public void BuildGhost(DicomPointCloud ghost, float intensity)
@@ -586,7 +586,7 @@ namespace Dicom.Gene
                 return;
             }
 
-            // 选中基因且表达值长度匹配:走 Cividis 表达底图
+            // 选中基因且表达值长度匹配:走表达底图(GeneBrushVisual 复制主点云配色显色)
             if (_currentGene != null && _currentGene.Values.Length == cellCount)
             {
                 BuildGhostExpr(ghost, cellCount);
@@ -619,7 +619,7 @@ namespace Dicom.Gene
         }
 
         // 选中基因的幽灵表达底图:两遍式跳过 NaN(复用 GeneCountJob 传零长掩码计数),
-        // 每有效 cell 写归一化表达强度 + Selected=0。归一化范围同主点云(基因值域),使 Cividis 铺满
+        // 每有效 cell 写归一化表达强度 + Selected=0。归一化范围同主点云(基因值域),使配色铺满
         void BuildGhostExpr(DicomPointCloud ghost, int cellCount)
         {
             const int blockSize = 4096;
