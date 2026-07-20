@@ -63,8 +63,11 @@ namespace Dicom.Gene
         [SerializeField, Range(0f, 1f)] float _ghostAlpha = 0.35f;
         [SerializeField] float _ghostPointSize = 0.0022f;
         [SerializeField] Color _ghostTint = new Color(0.7f, 0.74f, 0.82f, 1f);
-        // 幽灵材质 renderQueue:比主点云(Transparent=3000)略低,确保先画在最底层,被上层已画彩色点覆盖
-        const int GhostRenderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent - 1;
+        // 幽灵材质 renderQueue:比主点云(Transparent=3000)略高,确保在已画取彩色点之后画。
+        // 已画取点(Selected Pass)先画写模板 bit6,幽灵壳(Faded Pass)后画按模板 NotEqual 剔除已画取像素,
+        // 使模型内部已画取彩色颗粒能透过半透明壳显示。若幽灵先画,模板未写成,壳的 ZWrite 会深度遮挡内部彩色点
+        // (VR Single Pass Instanced + MSAA4 下 AlphaToMask 近二值,遮挡更彻底,双目里彻底看不见内部颗粒)
+        const int GhostRenderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent + 1;
 
         // 上次幽灵重建时是否处于"选中基因"态:与当前不一致则强制重建,切换 主点云配色/灰白配色
         bool _ghostBuiltWithGene;

@@ -130,6 +130,9 @@ Shader "Dicom/PointCloud"
             // 幽灵底图在每个 cell 有深度相等的孪生点,LEqual 下已画取点在自身表面恒压过孪生点保持清晰;
             // 仅当真有未画取组织挡在相机与已画区域之间时,才被那层组织按覆盖率半透遮挡(物理正确)
             ZWrite On
+            // 已画取点通过深度测试的像素写模板位(bit6),标记"此像素被已画取点占据",
+            // 供淡显 Pass 剔除,使外层未画取壳永不覆盖内部已画取颗粒(VR MSAA 下 AlphaToMask 近二值化会整片遮挡)
+            Stencil { Ref 64 WriteMask 64 Comp Always Pass Replace }
             Blend One Zero
             HLSLPROGRAM
             #pragma vertex vert
@@ -152,6 +155,8 @@ Shader "Dicom/PointCloud"
             // AlphaToMask 把 alpha 转成 MSAA 覆盖率抖动实现半透明,不再依赖混合的绘制顺序
             ZWrite On
             AlphaToMask On
+            // 已画取点占据的像素(模板 bit6=1)直接剔除,淡显壳只在其余像素绘制,不遮挡内部已画取颗粒
+            Stencil { Ref 64 ReadMask 64 Comp NotEqual }
             Blend One Zero
             HLSLPROGRAM
             #pragma vertex vert
@@ -278,6 +283,8 @@ Shader "Dicom/PointCloud"
             Cull Off
             // 已画取点老实做深度测试(默认 LEqual):被真实几何正常遮挡,不置顶;孪生点深度相等故自身表面恒清晰
             ZWrite On
+            // 已画取点写模板位(bit6),供淡显 Pass 剔除,使外层未画取壳永不覆盖内部已画取颗粒
+            Stencil { Ref 64 WriteMask 64 Comp Always Pass Replace }
             Blend One Zero
             CGPROGRAM
             #pragma vertex vert
@@ -294,6 +301,8 @@ Shader "Dicom/PointCloud"
             // 顺序无关透明:写深度 + AlphaToMask 覆盖率抖动,消除视角相关"空心内壁"
             ZWrite On
             AlphaToMask On
+            // 已画取点占据的像素(模板 bit6=1)直接剔除,淡显壳只在其余像素绘制,不遮挡内部已画取颗粒
+            Stencil { Ref 64 ReadMask 64 Comp NotEqual }
             Blend One Zero
             CGPROGRAM
             #pragma vertex vert
