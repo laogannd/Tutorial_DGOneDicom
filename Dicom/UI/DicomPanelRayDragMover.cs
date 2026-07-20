@@ -35,6 +35,9 @@ namespace Dicom.UI
         Vector3 _targetPosition;
         Quaternion _targetRotation;
 
+        // 外部(如 VRHudFollower)据此暂停自身移动,避免与射线拖拽争抢同一 root transform
+        public bool IsDragging => _dragging;
+
         void Awake()
         {
             // 移动目标是面板根 Canvas:标题条是其子级

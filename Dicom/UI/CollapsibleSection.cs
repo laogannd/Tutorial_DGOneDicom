@@ -19,10 +19,26 @@ namespace Dicom.UI
 
         void Start()
         {
-            // transform=header, parent=card, card.parent=滚动 content
-            var card = transform.parent;
-            _contentRoot = card != null ? card.parent as RectTransform : null;
+            // transform=header, parent=card;向上找最外层受布局约束的容器
+            // 普通面板:card.parent=滚动 content;统一面板多一层页容器,故不能只取 card.parent
+            _contentRoot = ResolveLayoutRoot(transform.parent);
             ApplyState();
+        }
+
+        // 从 card 起沿父链向上,取最外层仍带 LayoutGroup/ContentSizeFitter 的 RectTransform
+        // 折叠后强制重建它,保证嵌套页容器与滚动 content 高度一并收缩
+        static RectTransform ResolveLayoutRoot(Transform card)
+        {
+            RectTransform root = card as RectTransform;
+            var t = card;
+            while (t != null)
+            {
+                if (t is RectTransform rt &&
+                    (rt.GetComponent<LayoutGroup>() != null || rt.GetComponent<ContentSizeFitter>() != null))
+                    root = rt;
+                t = t.parent;
+            }
+            return root;
         }
 
         public void OnPointerClick(PointerEventData eventData) => Toggle();

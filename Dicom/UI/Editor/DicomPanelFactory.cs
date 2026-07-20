@@ -122,13 +122,14 @@ namespace Dicom.UI.EditorTools
         }
 
         // 创建 ScrollRect + Viewport + Content(竖直布局) + 粗垂直滚动条,返回 content 容器
-        static RectTransform CreateScrollView(RectTransform parent, out ScrollRect scrollRect)
+        // topInset:标题条以下额外让出的高度(统一面板用于让出标签栏)
+        static RectTransform CreateScrollView(RectTransform parent, out ScrollRect scrollRect, float topInset = 0f)
         {
             var viewport = CreateRect("Viewport", parent);
             Stretch(viewport, Vector2.zero, Vector2.one);
-            // 顶部让出固定标题条,右侧让出粗滚动条
+            // 顶部让出固定标题条(+额外 inset),右侧让出粗滚动条
             viewport.offsetMin = new Vector2(12f, 12f);
-            viewport.offsetMax = new Vector2(-(ScrollbarWidth + 16f), -(TitleBarHeight + 8f));
+            viewport.offsetMax = new Vector2(-(ScrollbarWidth + 16f), -(TitleBarHeight + 8f + topInset));
             viewport.gameObject.AddComponent<RectMask2D>();
             viewport.gameObject.AddComponent<Image>().color = new Color(0f, 0f, 0f, 0.01f);
 
@@ -158,7 +159,7 @@ namespace Dicom.UI.EditorTools
             scrollRect.content = content;
 
             // 粗垂直滚动条:贴面板右侧,顶部对齐滚动区,手指可推
-            var scrollbar = CreateVerticalScrollbar(parent);
+            var scrollbar = CreateVerticalScrollbar(parent, topInset);
             scrollRect.verticalScrollbar = scrollbar;
             scrollRect.verticalScrollbarVisibility = ScrollRect.ScrollbarVisibility.AutoHide;
 
@@ -166,7 +167,7 @@ namespace Dicom.UI.EditorTools
         }
 
         // 创建粗垂直滚动条:贴面板右侧,加宽 handle 便于 VR 手指推;PokeSlider 复用滑块投影逻辑不适用,这里靠射线拖 + 滚动联动
-        static Scrollbar CreateVerticalScrollbar(RectTransform parent)
+        static Scrollbar CreateVerticalScrollbar(RectTransform parent, float topInset = 0f)
         {
             var rt = CreateRect("VerticalScrollbar", parent);
             // 锚到右侧,顶部对齐滚动区底部高度,纵向铺满滚动区
@@ -175,7 +176,7 @@ namespace Dicom.UI.EditorTools
             rt.pivot = new Vector2(1f, 0.5f);
             rt.sizeDelta = new Vector2(ScrollbarWidth, 0f);
             rt.offsetMin = new Vector2(-(ScrollbarWidth + 8f), 12f);
-            rt.offsetMax = new Vector2(-8f, -(TitleBarHeight + 8f));
+            rt.offsetMax = new Vector2(-8f, -(TitleBarHeight + 8f + topInset));
 
             var bgImg = rt.gameObject.AddComponent<Image>();
             bgImg.color = SliderBg;
