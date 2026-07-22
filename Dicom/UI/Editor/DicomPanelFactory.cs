@@ -80,12 +80,13 @@ namespace Dicom.UI.EditorTools
         }
 
         // 抓取碰撞盒对齐顶部固定标题条:中心在面板顶端下移半个标题条高,尺寸贴合标题条
-        static void ConfigureGrabHandle(GameObject root)
+        static DicomPanelGrabHandle ConfigureGrabHandle(GameObject root)
         {
             var grab = root.AddComponent<DicomPanelGrabHandle>();
             grab.Configure(
                 new Vector3(PanelWidth, TitleBarHeight, 20f),
                 new Vector3(0f, PanelHeight * 0.5f - TitleBarHeight * 0.5f, 0f));
+            return grab;
         }
 
         // 把所有 PokeSlider / UIPokeBridge 的碰撞体深度调厚,中心前移加大

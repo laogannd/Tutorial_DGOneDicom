@@ -3,14 +3,26 @@ using Autohand;
 
 namespace Dicom.UI
 {
-    // 世界空间面板的软跟随 HUD:惰性角度死区跟随头显 + 正面朝向用户
-    // 与抓取/射线拖拽解耦:被抓取(Grabbable 持有)或射线拖拽中时暂停跟随,松手后从当前位置继续
-    // 惰性策略:头转出死区角度才柔和拉回视野正前方,小幅转头与手动微调保留,避免面板黏眼致晕
-    // 直接挂在面板根 Canvas 上,每帧改 root transform(Kinematic 刚体未抓取时不与物理冲突)
+    // 世界空间面板跟随,只有两种模式,不做任何花哨滤波:
+    // Smooth=纯连续指数平滑,面板始终柔和居中到视野正前方固定距离处,并正对用户
+    //   无死区、无角度拉回状态机、无相机低通、无偏移捕获 —— 这些叠加才是 VR 里发飘卡顿的根源
+    //   仅在抓取/射线拖拽时冻结,让位给交互防争抢 transform
+    // None=硬锁:每帧把面板焊到相机完整位姿(位置+旋转含俯仰),相对视野零偏差跟头转动
+    //   不依赖手动拖到 Camera 子物体,运行时按捕获的相对位姿重建;交互中让位,松手后按新落点重锁
+    // 关键:Smooth 下一旦被抓取/射线拖拽移动过,松手即自动切到 None,把落点焊死为死锁关系
+    //   —— 用户手动摆放视为"就放这",不再漂回视野正前方(那种归位跟随是最烦人的)
+    // 折叠时按相机上方向抬升面板,标题条向上收起退出视野中心,不再挡视野
     [DisallowMultipleComponent]
     [AddComponentMenu("Dicom/VR Hud Follower")]
     public class VRHudFollower : MonoBehaviour
     {
+        // Smooth=平滑跟随;None=硬锁(每帧焊到相机位姿,相对视野零偏差)
+        public enum FollowMode { Smooth, None }
+
+        [Header("模式")]
+        [SerializeField, Tooltip("Smooth=平滑跟随视野正前方;None=硬锁焊死在头显上,相对视野零偏差跟头转动")]
+        FollowMode _mode = FollowMode.Smooth;
+
         [Header("跟随目标")]
         [SerializeField, Tooltip("跟随的头显相机,空则运行时取 Camera.main")]
         Camera _camera;
@@ -21,29 +33,52 @@ namespace Dicom.UI
         [SerializeField, Tooltip("相对视线中心的垂直偏移(米,负=略低于视线)")]
         float _heightOffset = -0.1f;
 
-        [Header("惰性跟随")]
-        [SerializeField, Tooltip("头显视线与面板方向夹角超过此角度才开始拉回")]
-        float _recenterAngle = 32f;
-        [SerializeField, Tooltip("拉回到此夹角内停止,回到静止")]
-        float _settleAngle = 4f;
-
         [Header("平滑")]
-        [SerializeField, Tooltip("位置平滑速度,越大跟随越紧")]
+        [SerializeField, Tooltip("位置平滑速度,越大跟随越紧越快")]
         float _positionSmoothing = 6f;
         [SerializeField, Tooltip("朝向平滑速度,越大转向越快")]
         float _rotationSmoothing = 8f;
         [SerializeField, Tooltip("仅绕 Y 轴朝向(保持面板竖直)")]
         bool _onlyYaw = true;
 
+        [Header("交互")]
+        [SerializeField, Tooltip("被抓取/射线拖拽移动后自动切到硬锁,把落点焊死为死锁关系,不再漂回视野正前方")]
+        bool _lockAfterDrag = true;
+
+        [Header("折叠")]
+        [SerializeField, Tooltip("折叠时沿相机上方向抬升面板的距离(米),把标题条向上收出视野中心;0=不抬升")]
+        float _collapseRaise = 0.28f;
+
         DicomPanelGrabHandle _grabHandle;
         DicomPanelRayDragMover[] _movers;
-        // 拉回进行中:一旦触发持续拉回直到进入静止角度,期间不因抖动反复启停
-        bool _recentering;
-        // 首帧强制吸附到视野正前方,避免生成后停在世界原点
+        // 首帧直接吸附到视野正前方,避免生成后停在世界原点再飘过来
         bool _snapPending = true;
+        // 折叠态:折叠时按相机上方向额外抬升,标题条退出视野中心;由 UnifiedPanelCollapser 通知
+        bool _collapsed;
+        // None 硬锁:相机本地空间下捕获的面板相对位姿,每帧据此重建世界位姿实现零偏差焊接
+        Vector3 _lockLocalPos;
+        Quaternion _lockLocalRot;
+        bool _lockReady;
+        // 上一帧是否在交互:检测交互结束边沿,None 模式下松手后按新落点重捕获锁定位姿
+        bool _wasInteracting;
 
         // 工厂构建时回填跟随相机
         public void SetCamera(Camera cam) => _camera = cam;
+
+        // 运行时切换跟随模式;切回 Smooth 时重新吸附到视野正前方,切到 None 时按当前落点重新捕获锁定位姿
+        public void SetMode(FollowMode mode)
+        {
+            _mode = mode;
+            if (mode == FollowMode.Smooth) _snapPending = true;
+            else _lockReady = false;
+        }
+
+        // 折叠状态通知:折叠时按相机上方向抬升面板,标题条向上收出视野中心;展开还原
+        // 硬锁基准恒为展开等价、不随折叠变化,抬升仅在每帧重建时叠加;此处不重捕获,避免基准被抬升污染
+        public void SetCollapsed(bool collapsed)
+        {
+            _collapsed = collapsed;
+        }
 
         void Awake()
         {
@@ -51,12 +86,23 @@ namespace Dicom.UI
             _movers = GetComponentsInChildren<DicomPanelRayDragMover>(true);
         }
 
-        void Update()
+        void LateUpdate()
         {
             var cam = ResolveCamera();
             if (cam == null) return;
-            // 被抓取或射线拖拽中:让位给交互,不动 transform,并记为已在视野(松手后不立即拉回)
-            if (IsInteracting()) { _recentering = false; return; }
+
+            // None:硬锁焊到相机位姿,交互中让位、松手按新落点重锁,平时每帧据相对位姿重建世界位姿
+            if (_mode == FollowMode.None) { HardLock(cam); return; }
+
+            // 交互中(抓取/射线拖拽):让位给交互,不动 transform,标记本帧在交互
+            if (IsInteracting()) { _snapPending = false; _wasInteracting = true; return; }
+
+            // 交互刚结束的下降沿:开启死锁则把当前落点焊死为硬锁关系,不再漂回视野正前方
+            if (_wasInteracting)
+            {
+                _wasInteracting = false;
+                if (_lockAfterDrag) { SetMode(FollowMode.None); HardLock(cam); return; }
+            }
 
             Vector3 camPos = cam.transform.position;
             Vector3 viewDir = cam.transform.forward;
@@ -64,52 +110,66 @@ namespace Dicom.UI
             if (viewDir.sqrMagnitude < 1e-6f) return;
             viewDir.Normalize();
 
-            // 面板相对头显的当前水平方向与视线的夹角,决定是否需要拉回
-            Vector3 toPanel = transform.position - camPos;
-            if (_onlyYaw) toPanel.y = 0f;
-            float angle = toPanel.sqrMagnitude < 1e-6f ? 999f : Vector3.Angle(viewDir, toPanel);
+            // 折叠时沿相机上方向抬升,标题条向上收出视野中心
+            Vector3 raise = _collapsed ? cam.transform.up * _collapseRaise : Vector3.zero;
+            Vector3 targetPos = camPos + viewDir * _distance + Vector3.up * _heightOffset + raise;
+            Quaternion targetRot = FacingRotation(targetPos, camPos);
 
-            if (_snapPending) { SnapToFront(camPos, viewDir); _snapPending = false; return; }
+            // 首帧瞬移,之后帧率无关连续指数平滑,无死区无状态机
+            if (_snapPending)
+            {
+                transform.SetPositionAndRotation(targetPos, targetRot);
+                _snapPending = false;
+                return;
+            }
 
-            if (angle > _recenterAngle) _recentering = true;
-            else if (angle <= _settleAngle) _recentering = false;
-
-            if (_recentering) FollowFront(camPos, viewDir);
-            FaceCamera(camPos);
+            float tp = 1f - Mathf.Exp(-_positionSmoothing * Time.deltaTime);
+            float tr = 1f - Mathf.Exp(-_rotationSmoothing * Time.deltaTime);
+            transform.SetPositionAndRotation(
+                Vector3.Lerp(transform.position, targetPos, tp),
+                Quaternion.Slerp(transform.rotation, targetRot, tr));
         }
 
-        // 目标位置:视野正前方 _distance 处,叠加垂直偏移
-        Vector3 TargetPosition(Vector3 camPos, Vector3 viewDir)
+        // None 硬锁:把面板焊到相机完整位姿(含俯仰),相对视野零偏差
+        // 首次进入或交互刚结束时按当前落点捕获相机本地空间下的相对位姿,之后每帧据此重建世界位姿
+        void HardLock(Camera cam)
         {
-            return camPos + viewDir * _distance + Vector3.up * _heightOffset;
+            Transform camT = cam.transform;
+
+            // 交互中(抓取/射线拖拽):让位给交互,不动 transform,标记待重捕获
+            if (IsInteracting())
+            {
+                _wasInteracting = true;
+                _lockReady = false;
+                return;
+            }
+
+            // 首次锁定 或 交互刚结束:按面板当前落点捕获相对相机的本地位姿
+            // 捕获基准恒为展开态:若此刻处于折叠抬升状态,先扣除抬升,避免展开/折叠切换时抬升被重复计入
+            if (!_lockReady || _wasInteracting)
+            {
+                Vector3 basePos = transform.position - (_collapsed ? camT.up * _collapseRaise : Vector3.zero);
+                _lockLocalPos = camT.InverseTransformPoint(basePos);
+                _lockLocalRot = Quaternion.Inverse(camT.rotation) * transform.rotation;
+                _lockReady = true;
+                _wasInteracting = false;
+                return;
+            }
+
+            // 每帧据相对位姿重建世界位姿,焊死在头显上;折叠时沿相机上方向抬升,标题条收出视野中心
+            Vector3 raise = _collapsed ? camT.up * _collapseRaise : Vector3.zero;
+            transform.SetPositionAndRotation(
+                camT.TransformPoint(_lockLocalPos) + raise,
+                camT.rotation * _lockLocalRot);
         }
 
-        // 首帧瞬移到正前方并正对用户,无平滑
-        void SnapToFront(Vector3 camPos, Vector3 viewDir)
+        // 面板正对用户的朝向(可选仅 yaw 保持竖直)
+        Quaternion FacingRotation(Vector3 panelPos, Vector3 camPos)
         {
-            transform.position = TargetPosition(camPos, viewDir);
-            transform.rotation = FacingRotation(camPos);
-        }
-
-        // 柔和拉回视野正前方
-        void FollowFront(Vector3 camPos, Vector3 viewDir)
-        {
-            Vector3 target = TargetPosition(camPos, viewDir);
-            transform.position = Vector3.Lerp(transform.position, target, Time.deltaTime * _positionSmoothing);
-        }
-
-        // 面板正面(Canvas 可见面)朝向用户:forward 背离用户
-        void FaceCamera(Vector3 camPos)
-        {
-            transform.rotation = Quaternion.Slerp(transform.rotation, FacingRotation(camPos), Time.deltaTime * _rotationSmoothing);
-        }
-
-        Quaternion FacingRotation(Vector3 camPos)
-        {
-            Vector3 toPanel = transform.position - camPos;
-            if (_onlyYaw) toPanel.y = 0f;
-            if (toPanel.sqrMagnitude < 1e-6f) return transform.rotation;
-            return Quaternion.LookRotation(toPanel.normalized, Vector3.up);
+            Vector3 toCam = panelPos - camPos;
+            if (_onlyYaw) toCam.y = 0f;
+            if (toCam.sqrMagnitude < 1e-6f) return transform.rotation;
+            return Quaternion.LookRotation(toCam.normalized, Vector3.up);
         }
 
         // 抓取持有中或任一标题条射线拖拽中视为交互中

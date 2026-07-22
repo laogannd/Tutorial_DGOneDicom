@@ -22,8 +22,17 @@ namespace Dicom.UI
 
         void Start()
         {
-            if (_dicomTabButton != null) _dicomTabButton.onClick.AddListener(ShowDicom);
-            if (_geneTabButton != null) _geneTabButton.onClick.AddListener(ShowGene);
+            // 幂等订阅:项目禁用 Domain Reload,先移再加防跨 Play 会话重复叠加
+            if (_dicomTabButton != null)
+            {
+                _dicomTabButton.onClick.RemoveListener(ShowDicom);
+                _dicomTabButton.onClick.AddListener(ShowDicom);
+            }
+            if (_geneTabButton != null)
+            {
+                _geneTabButton.onClick.RemoveListener(ShowGene);
+                _geneTabButton.onClick.AddListener(ShowGene);
+            }
             // 默认展示 DICOM 页
             ShowDicom();
         }

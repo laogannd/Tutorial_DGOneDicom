@@ -103,5 +103,17 @@ namespace Dicom.UI
             _colliderSize = size;
             _colliderCenter = center;
         }
+
+        // 运行时改碰撞盒:面板折叠/展开时标题条在根内的中心随之变化,需同步碰撞盒
+        public void ApplyCollider(Vector3 size, Vector3 center)
+        {
+            _colliderSize = size;
+            _colliderCenter = center;
+            if (_collider != null)
+            {
+                _collider.size = size;
+                _collider.center = center;
+            }
+        }
     }
 }
