@@ -20,6 +20,7 @@ namespace Dicom.UI
         [SerializeField] WindowLevelController _windowLevel;
         [SerializeField] ClippingPlaneController _clipping;
         [SerializeField] DicomModelTransform _modelTransform;
+        [SerializeField] DicomMeasureTool _measure;
 
         [Header("数据源自动配置")]
         // 点云物体常由 DicomDemoBootstrap 运行时动态创建,面板 Start 时可能尚不存在
@@ -87,6 +88,14 @@ namespace Dicom.UI
         [SerializeField] Button _applyHuRangeButton;
         [SerializeField] TextMeshProUGUI _huApplyHintLabel;
 
+        [Header("空间测距")]
+        // 启用捏合放点 + 段距离列表 + 撤销/清空;对齐 UnifiedDebugPanel.DrawMeasure
+        [SerializeField] Toggle _measureToggle;
+        [SerializeField] TextMeshProUGUI _measureHintLabel;
+        [SerializeField] TextMeshProUGUI _measureListText;
+        [SerializeField] Button _undoMeasureButton;
+        [SerializeField] Button _clearMeasureButton;
+
         float _tintR = 1f, _tintG = 1f, _tintB = 1f, _gain = 1f;
 
         // 尺寸标签缓存:位姿每帧可能触发,先按显示精度比对数值,变化时才重拼字符串避免每帧 GC
@@ -130,6 +139,7 @@ namespace Dicom.UI
                 _controller.OnHuAnalyzed -= OnHuAnalyzed;
             }
             if (_modelTransform != null) _modelTransform.OnPoseChanged -= OnModelPoseChanged;
+            if (_measure != null) _measure.OnMeasurementsChanged -= OnMeasurementsChanged;
         }
 
         void Update()
@@ -178,12 +188,20 @@ namespace Dicom.UI
                 _modelTransform = _controller.GetComponent<DicomModelTransform>();
                 if (_modelTransform == null) _modelTransform = GetComponentInChildren<DicomModelTransform>();
             }
+            // 测距工具与 DicomModelTransform 同物体(Bootstrap 挂载);未绑定则同物体/全场景查找
+            if (_measure == null)
+            {
+                if (_modelTransform != null) _measure = _modelTransform.GetComponent<DicomMeasureTool>();
+                if (_measure == null) _measure = _controller.GetComponent<DicomMeasureTool>();
+                if (_measure == null) _measure = FindFirstObjectByType<DicomMeasureTool>();
+            }
             // 订阅位姿变化,射线/双手缩放拖动时实时刷新尺寸数值
             if (_modelTransform != null) _modelTransform.OnPoseChanged += OnModelPoseChanged;
 
             BindControllerEvents();
             // 数据源到位后重新配置依赖 controller 的滑块范围与初值
             SetupControllerControls();
+            BindMeasureTool();
             _dataSourceBound = true;
             return true;
         }
@@ -251,8 +269,18 @@ namespace Dicom.UI
             if (_lutPresetButton != null) _lutPresetButton.onClick.AddListener(OnCycleLutPreset);
             if (_resetTransformButton != null) _resetTransformButton.onClick.AddListener(OnResetTransform);
 
+            // 测距控件:开关/撤销/清空;列表刷新在绑到 DicomMeasureTool 后执行
+            if (_measureToggle != null)
+            {
+                _measureToggle.isOn = false;
+                _measureToggle.onValueChanged.AddListener(OnMeasureToggle);
+            }
+            if (_undoMeasureButton != null) _undoMeasureButton.onClick.AddListener(OnUndoMeasure);
+            if (_clearMeasureButton != null) _clearMeasureButton.onClick.AddListener(OnClearMeasure);
+
             RefreshAppearanceLabels();
             if (_huApplyHintLabel != null) _huApplyHintLabel.text = "";
+            RefreshMeasureList();
         }
 
         // 依赖 controller 的控件:点大小取决于点云组件,阈值/归一化初值取自 controller
@@ -660,6 +688,65 @@ namespace Dicom.UI
         void ApplyTint()
         {
             if (_pointCloud != null) _pointCloud.SetTint(_tintR, _tintG, _tintB, _gain);
+        }
+
+        // === 空间测距 ===
+        // 绑到 DicomMeasureTool:订阅段变化、同步开关态、注入距离文本字体
+        void BindMeasureTool()
+        {
+            if (_measure == null) return;
+
+            _measure.OnMeasurementsChanged -= OnMeasurementsChanged;
+            _measure.OnMeasurementsChanged += OnMeasurementsChanged;
+            if (_globalFont != null) _measure.SetFont(_globalFont);
+
+            if (_measureToggle != null)
+                _measureToggle.SetIsOnWithoutNotify(_measure.MeasureEnabled);
+            RefreshMeasureList();
+        }
+
+        void OnMeasureToggle(bool on)
+        {
+            if (_measure != null) _measure.SetEnabled(on);
+        }
+
+        void OnUndoMeasure()
+        {
+            if (_measure != null) _measure.UndoLast();
+        }
+
+        void OnClearMeasure()
+        {
+            if (_measure != null) _measure.ClearAll();
+        }
+
+        void OnMeasurementsChanged() => RefreshMeasureList();
+
+        // 刷新段距离列表:无段显示提示;有段逐行显 mm/cm(与空间文本同一格式化规则)
+        void RefreshMeasureList()
+        {
+            if (_measureListText == null) return;
+            if (_measure == null)
+            {
+                _measureListText.text = "未绑定测距工具";
+                return;
+            }
+
+            int n = _measure.SegmentCount;
+            if (n == 0)
+            {
+                _measureListText.text = "暂无测量";
+                return;
+            }
+
+            var sb = new System.Text.StringBuilder();
+            for (int i = 0; i < n; i++)
+            {
+                float mm = _measure.GetDistanceMm(i);
+                string txt = mm < 10f ? $"{mm:F1} mm" : $"{mm / 10f:F2} cm";
+                sb.AppendLine($"段 {i + 1}: {txt}");
+            }
+            _measureListText.text = sb.ToString();
         }
     }
 }

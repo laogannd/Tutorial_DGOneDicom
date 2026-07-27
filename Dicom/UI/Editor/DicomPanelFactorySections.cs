@@ -34,6 +34,12 @@ namespace Dicom.UI.EditorTools
             public TextMeshProUGUI HuRangeText;
             public Button ApplyHuRangeButton;
             public TextMeshProUGUI HuApplyHintLabel;
+            // 空间测距:启用开关 + 段列表 + 撤销/清空
+            public Toggle MeasureToggle;
+            public TextMeshProUGUI MeasureHintLabel;
+            public TextMeshProUGUI MeasureListText;
+            public Button UndoMeasureButton;
+            public Button ClearMeasureButton;
         }
 
         static PanelRefs BuildSections(RectTransform content)
@@ -100,6 +106,17 @@ namespace Dicom.UI.EditorTools
             r.ModelScaleLabel = CreateLabel("ModelScaleLabel", transform, "模型缩放", 20f, LabelHeight);
             r.ModelScale = CreateSlider("ModelScaleSlider", transform);
             r.ResetTransformButton = CreateButton("ResetTransformButton", transform, "复位位置/大小");
+
+            // 空间测距区:捏合放点成段,列表显真实解剖距离,撤销/清空
+            // 对齐 UnifiedDebugPanel.DrawMeasure,供 VR 手交互
+            var measure = CreateSection(content, "空间测距", true);
+            r.MeasureToggle = CreateToggle("MeasureToggle", measure, "启用测量(捏合放点)");
+            r.MeasureHintLabel = CreateLabel("MeasureHintLabel", measure,
+                "捏合两次放两点成一段,实时显真实解剖距离", 18f, LabelHeight);
+            r.MeasureHintLabel.color = TextMuted;
+            r.MeasureListText = CreateLabel("MeasureListText", measure, "暂无测量", 20f, 150f);
+            r.UndoMeasureButton = CreateButton("UndoMeasureButton", measure, "撤销");
+            r.ClearMeasureButton = CreateButton("ClearMeasureButton", measure, "清空");
 
             // HU 区间分析区:默认折叠,加载后自动统计
             var hu = CreateSection(content, "HU 区间分析", false);
@@ -270,6 +287,11 @@ namespace Dicom.UI.EditorTools
             Set(so, "_huRangeText", r.HuRangeText);
             Set(so, "_applyHuRangeButton", r.ApplyHuRangeButton);
             Set(so, "_huApplyHintLabel", r.HuApplyHintLabel);
+            Set(so, "_measureToggle", r.MeasureToggle);
+            Set(so, "_measureHintLabel", r.MeasureHintLabel);
+            Set(so, "_measureListText", r.MeasureListText);
+            Set(so, "_undoMeasureButton", r.UndoMeasureButton);
+            Set(so, "_clearMeasureButton", r.ClearMeasureButton);
             so.ApplyModifiedPropertiesWithoutUndo();
         }
 
