@@ -63,6 +63,8 @@ namespace Dicom.Demo
             // DicomModelTransform 在缩放器之前挂,TwoHandScaler.Awake 才能取到它做相对缩放基准
             go.AddComponent<DicomModelTransform>();
             go.AddComponent<TwoHandScaler>();
+            // 空间测距卡尺:与 DicomModelTransform 同物体,捏合放点存局部 mm 坐标算真实解剖距离
+            go.AddComponent<DicomMeasureTool>();
             // 远程射线操控:自治组件,Awake 自动发现场景内的 DicomRayPointer,无需手动装配
             go.AddComponent<DicomRayManipulator>();
             var windowLevel = go.AddComponent<WindowLevelController>();

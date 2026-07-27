@@ -20,6 +20,7 @@ namespace Dicom.Demo
         [SerializeField] WindowLevelController _windowLevel;
         [SerializeField] ClippingPlaneController _clipping;
         [SerializeField] DicomModelTransform _dicomTransform;
+        [SerializeField] DicomMeasureTool _measure;
 
         // === 基因组件组 ===
         [SerializeField] GeneColorController _geneController;
@@ -94,6 +95,8 @@ namespace Dicom.Demo
             _windowLevel = windowLevel;
             _clipping = clipping;
             _dicomTransform = modelTransform;
+            // 测量工具与 DicomModelTransform 挂在同物体,从其取得,免改 BindDicom 签名
+            if (modelTransform != null) _measure = modelTransform.GetComponent<DicomMeasureTool>();
 
             SyncFromComponents();
             // 绑定发生在 Start 之后时,此处补初始化显色模式与点云激活态
@@ -140,6 +143,7 @@ namespace Dicom.Demo
             if (_windowLevel == null) _windowLevel = GetComponentInChildren<WindowLevelController>();
             if (_clipping == null) _clipping = GetComponentInChildren<ClippingPlaneController>();
             if (_dicomTransform == null) _dicomTransform = GetComponentInChildren<DicomModelTransform>();
+            if (_measure == null) _measure = GetComponentInChildren<DicomMeasureTool>();
             if (_geneController == null) _geneController = GetComponentInChildren<GeneColorController>();
             if (_geneTransform == null) _geneTransform = GetComponentInChildren<GeneModelTransform>();
             if (_brush == null) _brush = GetComponentInChildren<GeneBrushSelector>();
@@ -286,6 +290,8 @@ namespace Dicom.Demo
             if (Foldout("d_appear", "外观 (实时)", false)) DrawAppearance();
             GUILayout.Space(6);
             if (Foldout("d_transform", "模型变换", false)) DrawDicomTransform();
+            GUILayout.Space(6);
+            if (Foldout("d_measure", "空间测距", false)) DrawMeasure();
             GUILayout.Space(6);
             if (Foldout("d_rebuild", "点生成 (需 Apply)", false)) DrawRebuild();
             GUILayout.Space(6);
@@ -484,6 +490,36 @@ namespace Dicom.Demo
 
             if (GUILayout.Button("复位位置/大小"))
                 _dicomTransform.ResetTransform();
+        }
+
+        void DrawMeasure()
+        {
+            if (_measure == null) { GUILayout.Label("未绑定 DicomMeasureTool"); return; }
+
+            bool on = GUILayout.Toggle(_measure.MeasureEnabled, " 启用测量(捏合放点)");
+            if (on != _measure.MeasureEnabled) _measure.SetEnabled(on);
+
+            GUILayout.Label("捏合两次放两点成一段,实时显真实解剖距离");
+
+            int n = _measure.SegmentCount;
+            if (n == 0)
+            {
+                GUILayout.Label("暂无测量");
+            }
+            else
+            {
+                for (int i = 0; i < n; i++)
+                {
+                    float mm = _measure.GetDistanceMm(i);
+                    string txt = mm < 10f ? $"{mm:F1} mm" : $"{mm / 10f:F2} cm";
+                    GUILayout.Label($"  段 {i + 1}: {txt}");
+                }
+            }
+
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("撤销")) _measure.UndoLast();
+            if (GUILayout.Button("清空")) _measure.ClearAll();
+            GUILayout.EndHorizontal();
         }
 
         void DrawRebuild()
