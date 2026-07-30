@@ -27,6 +27,9 @@ namespace Dicom.Gene.EditorTools
             var tagTable = FindFirstAsset<GeneTagNameTable>();
             if (tagTable != null) SetObject(so, "_tagNameTable", tagTable);
 
+            // 药物库:项目内已有则复用,没有则建一份示例库,保证面板药物分区直接可用
+            SetObject(so, "_drugProfile", GeneDrugProfileCreator.FindOrCreate());
+
             so.ApplyModifiedPropertiesWithoutUndo();
 
             Selection.activeGameObject = go;

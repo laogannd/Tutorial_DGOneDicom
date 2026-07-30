@@ -27,6 +27,8 @@ namespace Dicom.Demo
         [SerializeField] GeneModelTransform _geneTransform;
         [SerializeField] GeneBrushSelector _brush;
         [SerializeField] GeneTagNameTable _tagNameTable;
+        // 药物模块(mode3):面板只调它的接口,显色/分析的联动由它自己广播快照
+        [SerializeField] GeneDrugController _drug;
         // 基因延迟加载入口(切到基因标签首次触发)
         [SerializeField] GeneDemoBootstrap _geneBootstrap;
 
@@ -59,6 +61,10 @@ namespace Dicom.Demo
 
         // === 基因状态 ===
         static readonly string[] _geneModeNames = { "mode1 整体", "mode2 区域" };
+        // 药物剂量滑条的目标值(面板本地),提交给 GeneDrugController 后由其平滑过渡
+        float _drugDose;
+        // 最近一次分析所依据的药物版本;与当前快照不一致则提示结果过期
+        int _reportDrugRevision;
         string[] _genes;
         int _selectedGeneIdx = -1;
         // 0=mode1 整体, 1=mode2 区域
@@ -106,13 +112,15 @@ namespace Dicom.Demo
 
         // 基因 Bootstrap 调用,绑定基因组件并订阅事件;组件由 Bootstrap 延迟创建,此处才具备
         public void BindGene(GeneDemoBootstrap bootstrap, GeneColorController controller,
-            GeneModelTransform modelTransform, GeneBrushSelector brush, GeneTagNameTable tagNameTable)
+            GeneModelTransform modelTransform, GeneBrushSelector brush, GeneTagNameTable tagNameTable,
+            GeneDrugController drug)
         {
             _geneBootstrap = bootstrap;
             _geneController = controller;
             _geneTransform = modelTransform;
             _brush = brush;
             _tagNameTable = tagNameTable;
+            _drug = drug;
 
             SubscribeGene();
             // 绑定发生在切到基因标签之后,按当前标签校正点云激活态
@@ -133,6 +141,18 @@ namespace Dicom.Demo
                 _brush.OnSelectionChanged -= OnSelectionChanged;
                 _brush.OnSelectionChanged += OnSelectionChanged;
             }
+            if (_drug != null)
+            {
+                _drug.OnStateChanged -= OnDrugStateChanged;
+                _drug.OnStateChanged += OnDrugStateChanged;
+                _drugDose = _drug.TargetDose;
+            }
+        }
+
+        // 药物快照变化:同步剂量读数(过渡中由控制器驱动,面板只显示)
+        void OnDrugStateChanged(GeneDrugSnapshot snapshot)
+        {
+            if (_drug != null && !_drug.IsTransitioning) _drugDose = _drug.TargetDose;
         }
 
         void Start()
@@ -147,6 +167,7 @@ namespace Dicom.Demo
             if (_geneController == null) _geneController = GetComponentInChildren<GeneColorController>();
             if (_geneTransform == null) _geneTransform = GetComponentInChildren<GeneModelTransform>();
             if (_brush == null) _brush = GetComponentInChildren<GeneBrushSelector>();
+            if (_drug == null) _drug = GetComponentInChildren<GeneDrugController>();
 
             SyncFromComponents();
             ApplyTint();
@@ -169,6 +190,7 @@ namespace Dicom.Demo
                 _geneController.OnGeneChanged -= OnGeneChanged;
             }
             if (_brush != null) _brush.OnSelectionChanged -= OnSelectionChanged;
+            if (_drug != null) _drug.OnStateChanged -= OnDrugStateChanged;
         }
 
         // 把当前组件参数读回面板,避免面板默认值覆盖 Inspector 配置
@@ -582,6 +604,8 @@ namespace Dicom.Demo
             }
             if (Foldout("g_gene", "基因选择")) DrawGeneSelect();
             GUILayout.Space(6);
+            if (Foldout("g_drug", "药物作用 (mode3)")) DrawDrug();
+            GUILayout.Space(6);
             if (Foldout("g_lut", "Colormap 预设", false)) DrawGeneLut();
             GUILayout.Space(6);
             if (Foldout("g_transform", "模型变换", false)) DrawGeneTransform();
@@ -662,6 +686,12 @@ namespace Dicom.Demo
         {
             if (_regionReport == null) { GUILayout.Label("确认分析后显示"); return; }
             GUILayout.Label($"区域: {_regionReport.RegionName}  (tag {_regionReport.DominantTag}, {_regionReport.CellCount:N0} cell)");
+            // 结果状态:算在哪个用药下,以及是否已被之后的用药变更作废
+            GUILayout.Label(_regionReport.HasDrug
+                ? $"用药: {_regionReport.DrugName} 剂量 {_regionReport.DrugDose:F2}"
+                : "用药: 无 (基线)");
+            if (_drug != null && _drug.Snapshot.Revision != _reportDrugRevision)
+                GUILayout.Label("用药已变更,结果已过期,请重新分析");
             GUILayout.Label($"前 {_regionReport.TopGenes.Count} 强表达基因:");
             for (int i = 0; i < _regionReport.TopGenes.Count; i++)
             {
@@ -701,6 +731,49 @@ namespace Dicom.Demo
                 }
             }
             GUILayout.EndScrollView();
+        }
+
+        // 药物:选药 -> 调剂量 -> 显色平滑过渡;画笔分析结果自动变成药后反应
+        void DrawDrug()
+        {
+            if (_drug == null) { GUILayout.Label("未绑定 GeneDrugController"); return; }
+            if (_drug.DrugCount == 0) { GUILayout.Label("未配置药物库 (GeneDrugProfile)"); return; }
+
+            var profile = _drug.Profile;
+            for (int i = 0; i < profile.Count; i++)
+            {
+                var def = profile.Get(i);
+                if (def == null) continue;
+                bool cur = i == _drug.CurrentIndex;
+                if (GUILayout.Button((cur ? "● " : "○ ") + def.Name))
+                {
+                    _drug.SelectDrug(i);
+                    _drugDose = _drug.TargetDose;
+                }
+            }
+
+            var active = _drug.CurrentDrug;
+            if (active == null)
+            {
+                GUILayout.Label("当前未用药 (基线表达)");
+                return;
+            }
+
+            if (!string.IsNullOrEmpty(active.Description)) GUILayout.Label(active.Description);
+            GUILayout.Label($"剂量: {_drug.CurrentDose:F2} / {_drug.MaxDose:F2}" +
+                            (_drug.IsTransitioning ? "  (过渡中)" : ""));
+            float dose = GUILayout.HorizontalSlider(_drugDose, 0f, _drug.MaxDose);
+            if (!Mathf.Approximately(dose, _drugDose))
+            {
+                _drugDose = dose;
+                _drug.SetDose(dose);
+            }
+
+            if (GUILayout.Button("停药 (恢复基线)"))
+            {
+                _drug.ClearDrug();
+                _drugDose = 0f;
+            }
         }
 
         void DrawGeneLut()
@@ -758,8 +831,12 @@ namespace Dicom.Demo
 
             try
             {
+                // 药物快照 + 全模型 tag 一并交给后台:分析算的是药物作用后的表达值
+                var drugState = _geneController.Drug;
+                var allTags = _geneController.Model.Tag;
                 var report = await GeneRegionAnalyzer.AnalyzeAsync(
                     ids, tags, _geneController.ExpressionDir, _geneController.Model.CellCount, _topN,
+                    drugState, allTags,
                     p => { _bgAnalyzeProgress = p; _analyzeProgressDirty = true; },
                     System.Threading.CancellationToken.None);
 
@@ -770,7 +847,10 @@ namespace Dicom.Demo
                     if (!string.IsNullOrEmpty(name)) report.RegionName = name;
                 }
                 _regionReport = report;
-                _analyzeHint = $"分析完成,主导区域 {report.RegionName}";
+                _reportDrugRevision = report.DrugRevision;
+                _analyzeHint = report.HasDrug
+                    ? $"分析完成({report.DrugName} 作用下),主导区域 {report.RegionName}"
+                    : $"分析完成,主导区域 {report.RegionName}";
             }
             catch (System.Exception e)
             {

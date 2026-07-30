@@ -39,11 +39,20 @@ namespace Dicom.Gene
         public event Action<DicomLoadReport> OnReportChanged;
         // 当前基因切换完成,携带基因名
         public event Action<string> OnGeneChanged;
+        // 生效表达值已变化(切基因 或 药物剂量步进后重算完成),携带当前药物快照
+        // 下游(幽灵底图/信标/面板)据此刷新,不必分别订阅基因与药物两路信号
+        public event Action<GeneDrugSnapshot> OnExpressionChanged;
 
         DicomPointCloud _pointCloud;
         GeneModelData _model;
         GeneExpression _currentGene;
         string _exprDir;
+
+        // 药物状态(由 GeneDrugController 推送的不可变快照);None 表示无药基线
+        GeneDrugSnapshot _drug = GeneDrugSnapshot.None;
+        // 药物作用后的表达值缓冲,长度=CellCount,复用不重分配;无药时不使用(直接走基线数组)
+        float[] _drugValues;
+        bool _drugValuesValid;
 
         // 选中掩码,长度 CellCount;mode2 只渲染置位 cell。null/未创建表示 mode1 全选
         NativeArray<byte> _mask;
@@ -64,6 +73,8 @@ namespace Dicom.Gene
         public GeneModelData Model => _model;
         public GeneExpression CurrentGene => _currentGene;
         public string CurrentGeneName => _currentGene != null ? _currentGene.GeneName : "";
+        // 当前药物快照:画笔区域分析等下游据此在同一状态下算结果并校验版本
+        public GeneDrugSnapshot Drug => _drug;
         public DicomLoadReport Report => _report;
         public Bounds LocalBounds => _localBounds;
         public DicomLutProfile LutProfile => _lutProfile;
@@ -142,6 +153,9 @@ namespace Dicom.Gene
                 // 复用会导致 Burst Job 按新 CellCount 遍历时越界(Player 上硬崩溃),这里一并失效
                 if (_mask.IsCreated) _mask.Dispose();
                 _currentGene = null;
+                // 药物变换缓冲长度绑定旧 CellCount,一并失效防越界
+                _drugValues = null;
+                _drugValuesValid = false;
                 _geneRequestSeq = 0;
                 _model = model;
                 BuildNativeCells(model);
@@ -220,8 +234,11 @@ namespace Dicom.Gene
                 if (seq != _geneRequestSeq || token.IsCancellationRequested) return;
 
                 _currentGene = gene;
+                // 新基因的药物变换结果须重算
+                _drugValuesValid = false;
                 RebuildPoints();
                 OnGeneChanged?.Invoke(gene.GeneName);
+                OnExpressionChanged?.Invoke(_drug);
             }
             catch (OperationCanceledException) { }
             catch (Exception e)
@@ -256,7 +273,8 @@ namespace Dicom.Gene
             const int blockSize = 4096;
             int blocks = (cellCount + blockSize - 1) / blockSize;
 
-            var values = new NativeArray<float>(_currentGene.Values, Allocator.TempJob);
+            // 药物作用后的表达值(无药时即基线数组),渲染/分析/底图全部走这一份,保证三者一致
+            var values = new NativeArray<float>(EffectiveValues(), Allocator.TempJob);
             var blockCounts = new NativeArray<int>(blocks, Allocator.TempJob);
             var blockOffsets = new NativeArray<int>(blocks, Allocator.TempJob);
             NativeArray<DicomPoint> points = default;
@@ -363,6 +381,41 @@ namespace Dicom.Gene
                 if (blockMax.IsCreated) blockMax.Dispose();
                 if (emptyMask.IsCreated) emptyMask.Dispose();
             }
+        }
+
+        // === 药物(mode3) ===
+        // 接收 GeneDrugController 推送的药物快照:表达值缓冲失效并重建点集,得整体显色平滑过渡
+        // 归一化范围仍取无药基线值域,故增强类药把整体推向 colormap 高端、抑制类退向低端,变化肉眼可见
+        public void SetDrugState(GeneDrugSnapshot snapshot)
+        {
+            var next = snapshot != null ? snapshot : GeneDrugSnapshot.None;
+            if (ReferenceEquals(next, _drug)) return;
+            _drug = next;
+            _drugValuesValid = false;
+            if (_currentGene == null) return;
+            RebuildPoints();
+            OnExpressionChanged?.Invoke(_drug);
+        }
+
+        // 当前生效的逐 cell 表达值:无药返回基线数组本身(零拷贝),有药返回复用缓冲里的变换结果
+        // 渲染、幽灵底图、区域分析统一从此取值,是"药后模型"的唯一真实来源
+        public float[] EffectiveValues()
+        {
+            if (_currentGene == null) return null;
+            float[] baseValues = _currentGene.Values;
+            if (!_drug.HasEffect || !_drug.AffectsGene(_currentGene.GeneName)) return baseValues;
+
+            if (_drugValues == null || _drugValues.Length != baseValues.Length)
+            {
+                _drugValues = new float[baseValues.Length];
+                _drugValuesValid = false;
+            }
+            if (!_drugValuesValid)
+            {
+                _drug.ApplyAll(baseValues, _drugValues, _currentGene.GeneName, _model != null ? _model.Tag : null);
+                _drugValuesValid = true;
+            }
+            return _drugValues;
         }
 
         // === 选中掩码(mode2) ===
@@ -625,7 +678,8 @@ namespace Dicom.Gene
             const int blockSize = 4096;
             int blocks = (cellCount + blockSize - 1) / blockSize;
 
-            var values = new NativeArray<float>(_currentGene.Values, Allocator.TempJob);
+            // 底图与主点云共用同一份药物作用后的表达值,画取/未画取显色始终同一状态
+            var values = new NativeArray<float>(EffectiveValues(), Allocator.TempJob);
             var blockCounts = new NativeArray<int>(blocks, Allocator.TempJob);
             var blockOffsets = new NativeArray<int>(blocks, Allocator.TempJob);
             var emptyMask = new NativeArray<byte>(0, Allocator.TempJob);

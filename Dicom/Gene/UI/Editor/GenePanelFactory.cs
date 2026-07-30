@@ -13,6 +13,8 @@ namespace Dicom.UI.EditorTools
     {
         // top 基因按钮固定槽数(与 GenePanelUI 数组对应)
         const int GeneTopSlots = 5;
+        // 药物按钮固定槽数:药物库超出此数的条目在 VR 面板不显示(OnGUI 面板不受限)
+        const int GeneDrugSlots = 6;
 
         [MenuItem("GameObject/Dicom/创建基因 VR 面板", false, 12)]
         public static void CreateGenePanelInScene()
@@ -114,6 +116,13 @@ namespace Dicom.UI.EditorTools
             public TextMeshProUGUI SelectionLabel;
             public Slider BrushRadius;
             public TextMeshProUGUI BrushRadiusLabel;
+            // 药物作用 (mode3)
+            public Button[] DrugButtons = new Button[GeneDrugSlots];
+            public TextMeshProUGUI[] DrugButtonLabels = new TextMeshProUGUI[GeneDrugSlots];
+            public TextMeshProUGUI DrugStateLabel;
+            public Slider DrugDose;
+            public TextMeshProUGUI DrugDoseLabel;
+            public Button ClearDrugButton;
             public TextMeshProUGUI RegionNameLabel;
             public Button[] TopGeneButtons = new Button[GeneTopSlots];
             public TextMeshProUGUI[] TopGeneLabels = new TextMeshProUGUI[GeneTopSlots];
@@ -156,6 +165,19 @@ namespace Dicom.UI.EditorTools
             r.LutPresetLabel = CreateLabel("LutPresetLabel", colormap, "Colormap: HotIron", 20f, LabelHeight);
             r.LutPresetButton = CreateButton("LutPresetButton", colormap, "切换 Colormap");
 
+            // 药物作用:点药按钮给药,剂量滑条驱动整体显色平滑过渡;药后值同时作用于画笔分析
+            var drug = CreateSection(content, "药物作用 (mode3)", true);
+            r.DrugStateLabel = CreateLabel("DrugStateLabel", drug, "药物: 未用药 (基线表达)", 22f, LabelHeight);
+            for (int i = 0; i < GeneDrugSlots; i++)
+            {
+                var btn = CreateButton($"Drug{i}", drug, "---");
+                r.DrugButtons[i] = btn;
+                r.DrugButtonLabels[i] = btn.GetComponentInChildren<TextMeshProUGUI>(true);
+            }
+            r.DrugDoseLabel = CreateLabel("DrugDoseLabel", drug, "剂量: -", 20f, LabelHeight);
+            r.DrugDose = CreateSlider("DrugDoseSlider", drug);
+            r.ClearDrugButton = CreateButton("ClearDrugButton", drug, "停药 (恢复基线)");
+
             var brush = CreateSection(content, "空间画笔 (mode2)", true);
             r.BrushToggle = CreateToggle("BrushToggle", brush, "启用画笔(球形)");
             r.BrushRadiusLabel = CreateLabel("BrushRadiusLabel", brush, "笔刷半径: 3.0 cm", 20f, LabelHeight);
@@ -165,7 +187,8 @@ namespace Dicom.UI.EditorTools
             r.AnalyzeButton = CreateButton("AnalyzeButton", brush, "确认分析");
 
             var region = CreateSection(content, "区域结果", true);
-            r.RegionNameLabel = CreateLabel("RegionNameLabel", region, "区域: (未分析)", 22f, LabelHeight);
+            // 两行:区域名 + 本结果的用药前提/过期提示,故高度取两倍
+            r.RegionNameLabel = CreateLabel("RegionNameLabel", region, "区域: (未分析)", 22f, LabelHeight * 2f);
             for (int i = 0; i < GeneTopSlots; i++)
             {
                 var btn = CreateButton($"TopGene{i}", region, $"{i + 1}. ---");
@@ -266,6 +289,12 @@ namespace Dicom.UI.EditorTools
             Set(so, "_selectionLabel", r.SelectionLabel);
             Set(so, "_brushRadiusSlider", r.BrushRadius);
             Set(so, "_brushRadiusLabel", r.BrushRadiusLabel);
+            SetArray(so, "_drugButtons", r.DrugButtons);
+            SetArray(so, "_drugButtonLabels", r.DrugButtonLabels);
+            Set(so, "_drugStateLabel", r.DrugStateLabel);
+            Set(so, "_drugDoseSlider", r.DrugDose);
+            Set(so, "_drugDoseLabel", r.DrugDoseLabel);
+            Set(so, "_clearDrugButton", r.ClearDrugButton);
             Set(so, "_regionNameLabel", r.RegionNameLabel);
             SetArray(so, "_topGeneButtons", r.TopGeneButtons);
             SetArray(so, "_topGeneLabels", r.TopGeneLabels);

@@ -18,6 +18,15 @@ namespace Dicom.Gene
         // 供区域结果搜索点选任意基因时 O(1) 查表;分母为 0(全模型无表达)记 -1 表示"无表达"
         public Dictionary<string, float> PaintFractions = new Dictionary<string, float>();
 
+        // 本结果算在哪一版药物状态下(GeneDrugSnapshot.Revision);面板拿到结果后与当前快照比对,
+        // 不一致说明分析期间用药变了,结果已过期须重新分析
+        public int DrugRevision;
+        // 用药名与剂量(无药为空串/0),供面板标注"此结果为 X 药 Y 剂量下的反应"
+        public string DrugName = "";
+        public float DrugDose;
+
+        public bool HasDrug => !string.IsNullOrEmpty(DrugName);
+
         public struct GeneScore
         {
             public string Gene;

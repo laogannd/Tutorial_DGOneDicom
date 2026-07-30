@@ -20,6 +20,8 @@ namespace Dicom.Gene
         [SerializeField] GeneModelTransform _modelTransform;
         [SerializeField] GeneBrushSelector _brush;
         [SerializeField] GeneTagNameTable _tagNameTable;
+        // 药物模块(mode3):面板只调它的接口,显色/底图/分析的联动由它广播快照完成
+        [SerializeField] GeneDrugController _drug;
         // 基因引导:VR 面板独立触发数据加载与点云激活,不依赖 OnGUI 面板先切标签
         [SerializeField] GeneDemoBootstrap _bootstrap;
 
@@ -69,6 +71,15 @@ namespace Dicom.Gene
         [SerializeField] Slider _brushRadiusSlider;
         [SerializeField] TextMeshProUGUI _brushRadiusLabel;
 
+        [Header("药物作用 (mode3)")]
+        // 药物按钮槽(工厂预建固定数量),点击给药;剂量滑条驱动整体显色平滑过渡
+        [SerializeField] Button[] _drugButtons;
+        [SerializeField] TextMeshProUGUI[] _drugButtonLabels;
+        [SerializeField] TextMeshProUGUI _drugStateLabel;
+        [SerializeField] Slider _drugDoseSlider;
+        [SerializeField] TextMeshProUGUI _drugDoseLabel;
+        [SerializeField] Button _clearDrugButton;
+
         [Header("区域结果")]
         [SerializeField] TextMeshProUGUI _regionNameLabel;
         // top N 基因按钮槽(工厂预建固定数量),点击渲染该基因该区域
@@ -112,6 +123,8 @@ namespace Dicom.Gene
         GeneRegionReport _report;
         // 最近一次 top 基因结果,供按钮点击取基因名
         string[] _topGeneNames;
+        // 最近一次分析所依据的药物版本;与当前快照不一致则在区域结果处提示过期
+        int _reportDrugRevision;
 
         // 区域内搜索:当前关键字 + 结果按钮对象池(复用模板 Instantiate 的副本)
         string _regionKeyword = "";
@@ -142,6 +155,7 @@ namespace Dicom.Gene
             }
             if (_brush != null) _brush.OnSelectionChanged -= OnSelectionChanged;
             if (_modelTransform != null) _modelTransform.OnPoseChanged -= OnModelPoseChanged;
+            if (_drug != null) _drug.OnStateChanged -= OnDrugStateChanged;
         }
 
         void Update()
@@ -187,6 +201,8 @@ namespace Dicom.Gene
                 _modelTransform = _controller.GetComponent<GeneModelTransform>();
             if (_brush == null)
                 _brush = _controller.GetComponent<GeneBrushSelector>();
+            if (_drug == null)
+                _drug = _controller.GetComponent<GeneDrugController>();
             // 工厂未绑 tag 名表时,复用画笔已注入的同一张,避免区域名回退成 "区域{tag}"
             if (_tagNameTable == null && _brush != null) _tagNameTable = _brush.TagNameTable;
 
@@ -195,6 +211,7 @@ namespace Dicom.Gene
             _controller.OnLoaded += OnModelLoaded;
             if (_brush != null) _brush.OnSelectionChanged += OnSelectionChanged;
             if (_modelTransform != null) _modelTransform.OnPoseChanged += OnModelPoseChanged;
+            if (_drug != null) _drug.OnStateChanged += OnDrugStateChanged;
 
             RefreshLutPresetLabel();
             RefreshStatus(_controller.Report);
@@ -245,6 +262,7 @@ namespace Dicom.Gene
                 }
             }
 
+            SetupDrugControls();
             SetupRegionSearchControls();
             RefreshRegionResult();
         }
@@ -261,6 +279,14 @@ namespace Dicom.Gene
             {
                 ConfigSlider(_brushRadiusSlider, _brush.MinRadius, _brush.MaxRadius, _brush.BrushRadius, OnBrushRadiusChanged);
                 RefreshBrushRadiusLabel();
+            }
+
+            // 药物:控制器绑定后才知道药物库内容,此时填按钮文字并配剂量滑条量程
+            if (_drug != null)
+            {
+                ConfigSlider(_drugDoseSlider, 0f, _drug.MaxDose, _drug.TargetDose, OnDrugDoseChanged);
+                RefreshDrugButtons();
+                RefreshDrugState();
             }
         }
 
@@ -554,8 +580,10 @@ namespace Dicom.Gene
 
             try
             {
+                // 把药物快照与全模型 tag 交给后台:分析结果即药物作用后的反应
                 var report = await GeneRegionAnalyzer.AnalyzeAsync(
                     ids, tags, _controller.ExpressionDir, _controller.Model.CellCount, 5,
+                    _controller.Drug, _controller.Model.Tag,
                     p => { _bgAnalyzeProgress = p; _analyzeProgressDirty = true; },
                     CancellationToken.None);
 
@@ -566,6 +594,7 @@ namespace Dicom.Gene
                     if (!string.IsNullOrEmpty(name)) report.RegionName = name;
                 }
                 _report = report;
+                _reportDrugRevision = report.DrugRevision;
                 RefreshRegionResult();
             }
             catch (System.Exception e)
@@ -585,7 +614,7 @@ namespace Dicom.Gene
         {
             if (_regionNameLabel != null)
                 _regionNameLabel.text = _report != null
-                    ? $"区域: {_report.RegionName}  (tag {_report.DominantTag}, {_report.CellCount:N0} cell)"
+                    ? $"区域: {_report.RegionName}  (tag {_report.DominantTag}, {_report.CellCount:N0} cell)\n{DescribeReportDrug()}"
                     : "区域: (未分析)";
 
             int n = _report != null ? _report.TopGenes.Count : 0;
@@ -609,6 +638,17 @@ namespace Dicom.Gene
             RefreshRegionSearchResults();
         }
 
+        // 结果的用药前提说明 + 过期提示(分析后又改了用药,结果不再对应当前模型状态)
+        string DescribeReportDrug()
+        {
+            if (_report == null) return "";
+            string basis = _report.HasDrug
+                ? $"用药: {_report.DrugName} 剂量 {_report.DrugDose:F2}"
+                : "用药: 无 (基线)";
+            bool stale = _drug != null && _drug.Snapshot.Revision != _reportDrugRevision;
+            return stale ? basis + "  [用药已变更,请重新分析]" : basis;
+        }
+
         void OnTopGeneClicked(int idx)
         {
             if (_topGeneNames == null || idx < 0 || idx >= _topGeneNames.Length) return;
@@ -616,6 +656,100 @@ namespace Dicom.Gene
             if (_brush != null) _brush.SetEnabled(false);
             if (_brushToggle != null) _brushToggle.SetIsOnWithoutNotify(false);
             _controller.SelectGene(_topGeneNames[idx]);
+        }
+
+        // === 药物作用 (mode3) ===
+        // 药物按钮按索引绑定;控制器晚绑定时文字在 SetupControllerControls 里补齐
+        void SetupDrugControls()
+        {
+            if (_drugButtons != null)
+            {
+                for (int i = 0; i < _drugButtons.Length; i++)
+                {
+                    if (_drugButtons[i] == null) continue;
+                    int idx = i;
+                    _drugButtons[i].onClick.AddListener(() => OnDrugClicked(idx));
+                    _drugButtons[i].gameObject.SetActive(false);
+                }
+            }
+            if (_clearDrugButton != null) _clearDrugButton.onClick.AddListener(OnClearDrug);
+            RefreshDrugState();
+        }
+
+        // 填充药物按钮:有几味药显示几个槽,其余隐藏
+        void RefreshDrugButtons()
+        {
+            if (_drugButtons == null) return;
+            int n = _drug != null ? _drug.DrugCount : 0;
+            for (int i = 0; i < _drugButtons.Length; i++)
+            {
+                if (_drugButtons[i] == null) continue;
+                bool show = i < n;
+                _drugButtons[i].gameObject.SetActive(show);
+                if (!show) continue;
+                if (_drugButtonLabels != null && i < _drugButtonLabels.Length && _drugButtonLabels[i] != null)
+                {
+                    bool cur = i == _drug.CurrentIndex;
+                    _drugButtonLabels[i].text = (cur ? "● " : "○ ") + _drug.Profile.GetName(i);
+                }
+            }
+        }
+
+        void OnDrugClicked(int idx)
+        {
+            if (_drug == null) return;
+            // 给药需要点云已就绪(表达值要重算),与选基因同路径先确保加载
+            EnsureGeneReady();
+            _drug.SelectDrug(idx);
+            // 换药后量程可能变(各药 MaxDose 不同),重配滑条
+            if (_drugDoseSlider != null)
+            {
+                _drugDoseSlider.maxValue = _drug.MaxDose;
+                _drugDoseSlider.SetValueWithoutNotify(_drug.TargetDose);
+            }
+            RefreshDrugButtons();
+            RefreshDrugState();
+        }
+
+        void OnDrugDoseChanged(float v)
+        {
+            if (_drug != null) _drug.SetDose(v);
+            RefreshDrugState();
+        }
+
+        void OnClearDrug()
+        {
+            if (_drug == null) return;
+            _drug.ClearDrug();
+            if (_drugDoseSlider != null) _drugDoseSlider.SetValueWithoutNotify(0f);
+            RefreshDrugButtons();
+            RefreshDrugState();
+        }
+
+        // 药物快照变化(含过渡中每次步进):刷新读数;过渡结束再校正滑条,过渡中不抢用户手上的滑条
+        void OnDrugStateChanged(GeneDrugSnapshot snapshot)
+        {
+            RefreshDrugState();
+            RefreshDrugButtons();
+            if (_drug != null && !_drug.IsTransitioning && _drugDoseSlider != null)
+                _drugDoseSlider.SetValueWithoutNotify(_drug.TargetDose);
+            // 分析结果的用药前提可能已变,区域结果处需重刷过期提示
+            RefreshRegionResult();
+        }
+
+        void RefreshDrugState()
+        {
+            if (_drugStateLabel != null)
+            {
+                if (_drug == null) _drugStateLabel.text = "药物: 未绑定";
+                else if (_drug.DrugCount == 0) _drugStateLabel.text = "药物: 未配置药物库";
+                else if (_drug.CurrentDrug == null) _drugStateLabel.text = "药物: 未用药 (基线表达)";
+                else _drugStateLabel.text = $"药物: {_drug.CurrentDrugName}" + (_drug.IsTransitioning ? "  (过渡中)" : "");
+            }
+            if (_drugDoseLabel != null)
+                _drugDoseLabel.text = _drug != null && _drug.CurrentDrug != null
+                    ? $"剂量: {_drug.CurrentDose:F2} / {_drug.MaxDose:F2}"
+                    : "剂量: -";
         }
 
         // === 区域内基因搜索(查任意基因画取占比) ===

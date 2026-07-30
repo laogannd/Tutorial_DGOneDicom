@@ -103,6 +103,8 @@ namespace Dicom.Gene
             _controller.OnLoaded += OnModelLoaded;
             // 切基因后未画取底图须按新基因表达值重建(并复制新的主点云配色)
             _controller.OnGeneChanged += OnGeneChanged;
+            // 药物剂量步进也会改生效表达值,底图须同步重建,否则已画取彩色点变了而未画取底图仍是旧强度
+            _controller.OnExpressionChanged += OnExpressionChanged;
             // "未画取淡显"值现由幽灵底图承载:面板/Bootstrap 调 SelectionFade 时实时刷幽灵 alpha
             _controller.OnSelectionFadeChanged += OnSelectionFadeChanged;
             // Bootstrap 常在本组件挂载前就注入 SelectionFade(事件已过),主动拉取当前值作幽灵初值,防漏
@@ -125,6 +127,7 @@ namespace Dicom.Gene
             {
                 _controller.OnLoaded -= OnModelLoaded;
                 _controller.OnGeneChanged -= OnGeneChanged;
+                _controller.OnExpressionChanged -= OnExpressionChanged;
                 _controller.OnSelectionFadeChanged -= OnSelectionFadeChanged;
             }
             // 指示球/文本/指向线是场景根物体(非子物体),须显式销毁避免残留
@@ -148,6 +151,13 @@ namespace Dicom.Gene
 
         // 切基因:置脏使未画取底图按新基因表达值重建(复制新主点云配色的半透明底图)
         void OnGeneChanged(string _)
+        {
+            if (_destroyed) return;
+            _ghostDirty = true;
+        }
+
+        // 药物剂量步进(或切基因):生效表达值已变,底图按药后值重建,与主点云保持同一状态
+        void OnExpressionChanged(GeneDrugSnapshot _)
         {
             if (_destroyed) return;
             _ghostDirty = true;

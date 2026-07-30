@@ -20,6 +20,8 @@ namespace Dicom.Gene
         [SerializeField] TMPro.TMP_FontAsset _regionLabelFont;
         // tag->区域名映射,传给调试面板(可空,回退 "区域{tag}")
         [SerializeField] GeneTagNameTable _tagNameTable;
+        // 药物库(mode3);为空则面板药物分区显示"未配置药物库"
+        [SerializeField] GeneDrugProfile _drugProfile;
         [SerializeField] LayerMask _excludeLayers;
         // 组件创建完是否立即加载数据;统一面板模式下设 false,由面板切标签触发
         [SerializeField] bool _autoLoadOnStart = false;
@@ -31,9 +33,11 @@ namespace Dicom.Gene
         [SerializeField] bool _attachDebugPanel = true;
 
         GeneColorController _controller;
+        GeneDrugController _drug;
         bool _componentsReady;
 
         public GeneColorController Controller => _controller;
+        public GeneDrugController Drug => _drug;
 
         void Start()
         {
@@ -72,6 +76,9 @@ namespace Dicom.Gene
             // 覆盖率信标:每区域一个信标球标记已画/未画,消除"只见已画不知漏哪"
             var beacons = go.AddComponent<GeneCoverageBeacons>();
             if (_regionLabelFont != null) beacons.SetFont(_regionLabelFont);
+            // 药物模块(mode3):自行接线到显色控制器,面板只与它通信
+            _drug = go.AddComponent<GeneDrugController>();
+            if (_drugProfile != null) _drug.SetProfile(_drugProfile);
 
             if (!string.IsNullOrEmpty(_defaultGene))
                 _controller.OnLoaded += _ => _controller.SelectGene(_defaultGene);
@@ -83,7 +90,7 @@ namespace Dicom.Gene
             {
                 var panel = FindObjectOfType<UnifiedDebugPanel>();
                 if (panel == null) panel = gameObject.AddComponent<UnifiedDebugPanel>();
-                panel.BindGene(this, _controller, modelTransform, brush, _tagNameTable);
+                panel.BindGene(this, _controller, modelTransform, brush, _tagNameTable, _drug);
             }
         }
 
